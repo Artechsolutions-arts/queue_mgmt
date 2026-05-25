@@ -5,6 +5,7 @@ import {
   WS_URL,
   type RegisterPayload,
   type RegisterMultiPayload,
+  type Token,
 } from "@/lib/api";
 
 const STALE = 10_000;
@@ -22,7 +23,7 @@ export const useServiceTypes = () =>
     staleTime: 60_000,
   });
 
-export const useTokens = (status?: "WAITING" | "IN_PROGRESS" | "COMPLETED") =>
+export const useTokens = (status?: Token["status"]) =>
   useQuery({
     queryKey: ["tokens", status ?? "active"],
     queryFn: () => api.tokens(status),

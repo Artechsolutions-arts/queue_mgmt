@@ -11,7 +11,7 @@ import {
   useTokens,
 } from "@/hooks/use-queue-data";
 import { KpiCard, type KpiTone } from "@/components/dash/KpiCard";
-import type { Counter } from "@/lib/api";
+import type { Counter, Token } from "@/lib/api";
 
 export const Route = createFileRoute("/staff")({
   head: () => ({ meta: [{ title: "Staff Console · SmartQueue" }, { name: "description", content: "Counter operations console." }] }),
@@ -24,6 +24,10 @@ function StaffPage() {
   const { data: counters } = useCounters();
   const { data: stats } = useDashboard();
   const { data: inProgressTokens } = useTokens("IN_PROGRESS");
+
+  // Service history — past tokens staff can review (completed/no-show/cancelled).
+  const [historyStatus, setHistoryStatus] = useState<Token["status"]>("COMPLETED");
+  const { data: history, isLoading: historyLoading } = useTokens(historyStatus);
 
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const counter = useMemo(() => {
@@ -189,8 +193,86 @@ function StaffPage() {
           </div>
         </section>
       )}
+
+      <section className="mt-5">
+        <Panel className="overflow-hidden">
+          <PanelHeader
+            title="Service history"
+            subtitle="Past visits — completed, no-show, and cancelled tokens"
+            accent="violet"
+          />
+          <div className="flex items-center gap-1 border-b border-border px-4 py-2 text-xs">
+            {([
+              ["COMPLETED", "Completed"],
+              ["NO_SHOW", "No-show"],
+              ["CANCELLED", "Cancelled"],
+            ] as const).map(([s, label]) => (
+              <button
+                key={s}
+                onClick={() => setHistoryStatus(s)}
+                className={`rounded-lg px-3 py-1.5 transition ${
+                  historyStatus === s
+                    ? "bg-[var(--violet-glow)]/12 text-[var(--violet-glow)]"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+            <span className="ml-auto text-[10px] uppercase tracking-widest text-muted-foreground">
+              {history?.length ?? 0} records
+            </span>
+          </div>
+          <div className="max-h-[440px] overflow-y-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="sticky top-0 bg-card">
+                <tr className="text-[10px] uppercase tracking-widest text-muted-foreground">
+                  <th className="px-4 py-2 font-medium">Token</th>
+                  <th className="px-4 py-2 font-medium">Patient</th>
+                  <th className="px-4 py-2 font-medium">Service</th>
+                  <th className="px-4 py-2 font-medium">Counter</th>
+                  <th className="px-4 py-2 font-medium">When</th>
+                  <th className="px-4 py-2 font-medium text-right">Wait (min)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {historyLoading ? (
+                  <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">Loading history…</td></tr>
+                ) : (history?.length ?? 0) === 0 ? (
+                  <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">No {historyStatus.toLowerCase().replace("_", "-")} records yet.</td></tr>
+                ) : (
+                  history!.map((t) => (
+                    <tr key={t.id} className="border-t border-border/40 hover:bg-muted/30">
+                      <td className="px-4 py-2 font-mono text-foreground">{t.number}</td>
+                      <td className="px-4 py-2 text-foreground">{t.patient_name}</td>
+                      <td className="px-4 py-2 text-muted-foreground">{t.service_type_name ?? "—"}</td>
+                      <td className="px-4 py-2 text-muted-foreground">{t.counter_name ?? "—"}</td>
+                      <td className="px-4 py-2 text-muted-foreground">{formatDateTime(t.completed_at ?? t.created_at)}</td>
+                      <td className="px-4 py-2 text-right font-mono tabular-nums text-foreground/90">
+                        {t.actual_wait_minutes != null ? t.actual_wait_minutes.toFixed(1) : "—"}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+      </section>
     </AppShell>
   );
+}
+
+function formatDateTime(iso: string | null): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function CounterMiniCard({ counter, tone }: { counter: Counter; tone: KpiTone }) {
