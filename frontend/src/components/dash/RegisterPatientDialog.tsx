@@ -36,6 +36,7 @@ export function RegisterPatientDialog() {
   const [phone, setPhone] = useState("");
   const [notes, setNotes] = useState("");
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [consent, setConsent] = useState(false);
   const [result, setResult] = useState<RegisterMultiResult | null>(null);
 
   const { data: serviceTypes } = useServiceTypes();
@@ -55,6 +56,7 @@ export function RegisterPatientDialog() {
     name.trim() !== "" &&
     phone.trim() !== "" &&
     selected.size > 0 &&
+    consent &&
     !register.isPending;
 
   const errorMsg = useMemo(() => extractError(register.error), [register.error]);
@@ -72,6 +74,7 @@ export function RegisterPatientDialog() {
     setPhone("");
     setNotes("");
     setSelected(new Set());
+    setConsent(false);
     setResult(null);
     register.reset();
   };
@@ -211,6 +214,24 @@ export function RegisterPatientDialog() {
                 rows={2}
               />
             </div>
+
+            {/* WhatsApp/SMS opt-in — required before we message the patient. */}
+            <label
+              htmlFor="rp-consent"
+              className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-border bg-muted/30 p-3 text-xs text-muted-foreground"
+            >
+              <Checkbox
+                id="rp-consent"
+                checked={consent}
+                onCheckedChange={(c) => setConsent(c === true)}
+                className="mt-0.5"
+              />
+              <span>
+                The patient consents to receive queue updates and token
+                notifications via <span className="font-medium text-foreground">WhatsApp/SMS</span> on
+                this number.
+              </span>
+            </label>
 
             {errorMsg && (
               <div className="flex items-start gap-2 rounded-lg border border-[var(--danger)]/30 bg-[var(--danger)]/10 p-2.5 text-xs text-[var(--danger)]">
