@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { Users, Clock, UserCheck, TrendingUp, Play, CheckCircle2, UserX, Power } from "lucide-react";
+import { Users, Clock, UserCheck, TrendingUp, Play, CheckCircle2, UserX, Power, AlertTriangle } from "lucide-react";
 import { motion } from "framer-motion";
 import { useMemo } from "react";
 import { AppShell } from "@/components/layout/AppShell";
@@ -12,6 +12,7 @@ import {
   useTokens,
 } from "@/hooks/use-queue-data";
 import type { Counter, Token } from "@/lib/api";
+import { apiErrorMessage } from "@/lib/api";
 import { counterState, COUNTER_STATE_LABEL, type CounterState } from "@/lib/counter";
 
 export const Route = createFileRoute("/")({
@@ -179,16 +180,16 @@ function CounterMatrix({
                       label="Complete"
                       tone="emerald"
                       disabled={completeDisabled}
-                      pending={complete.isPending && complete.variables === token?.id}
-                      onClick={() => token && complete.mutate(token.id)}
+                      pending={complete.isPending && complete.variables === token?.number}
+                      onClick={() => token && complete.mutate(token.number)}
                     />
                     <ActionBtn
                       icon={UserX}
                       label="Absent"
                       tone="warn"
                       disabled={absentDisabled}
-                      pending={noShow.isPending && noShow.variables === token?.id}
-                      onClick={() => token && noShow.mutate(token.id)}
+                      pending={noShow.isPending && noShow.variables === token?.number}
+                      onClick={() => token && noShow.mutate(token.number)}
                     />
                     <ActionBtn
                       icon={Power}
@@ -207,8 +208,14 @@ function CounterMatrix({
       </table>
 
       {(callNext.error || complete.error || noShow.error || setCounterActive.error) && (
-        <div className="border-t border-[var(--danger)]/40 bg-[var(--danger)]/10 px-5 py-2 text-xs text-[var(--danger)]">
-          {String((callNext.error || complete.error || noShow.error || setCounterActive.error) as Error)}
+        <div className="flex items-start gap-2 border-t border-[var(--warn)]/40 bg-[var(--warn)]/10 px-5 py-2.5 text-xs text-[var(--warn)]">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>
+            {apiErrorMessage(
+              callNext.error || complete.error || noShow.error || setCounterActive.error,
+              "That action couldn't be completed.",
+            )}
+          </span>
         </div>
       )}
     </div>

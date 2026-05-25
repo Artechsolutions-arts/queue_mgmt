@@ -77,11 +77,11 @@ export function useQueueMutations() {
       onSuccess: refresh,
     }),
     complete: useMutation({
-      mutationFn: (tokenId: number) => api.complete(tokenId),
+      mutationFn: (tokenNumber: string) => api.complete(tokenNumber),
       onSuccess: refresh,
     }),
     noShow: useMutation({
-      mutationFn: (tokenId: number) => api.noShow(tokenId),
+      mutationFn: (tokenNumber: string) => api.noShow(tokenNumber),
       onSuccess: refresh,
     }),
     setCounterActive: useMutation({

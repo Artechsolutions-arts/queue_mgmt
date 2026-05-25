@@ -42,14 +42,15 @@ function DisplayPage() {
           <div className="rounded-full border border-[var(--emerald-glow)]/40 bg-[var(--emerald-glow)]/10 px-4 py-2 text-xs font-semibold uppercase tracking-widest text-[var(--emerald-glow)]">
             <span className="mr-2 inline-block h-2 w-2 rounded-full bg-[var(--emerald-glow)] pulse-dot align-middle" /> Live · <ClientClock />
           </div>
-          {/* Subtle exit so staff aren't trapped on the fullscreen public board. */}
+          {/* Clear exit so staff aren't trapped on the fullscreen public board. */}
           <Link
             to="/"
             title="Back to dashboard"
             aria-label="Back to dashboard"
-            className="grid h-9 w-9 place-items-center rounded-full border border-border/40 text-muted-foreground/50 transition hover:border-border hover:bg-card hover:text-foreground"
+            className="flex items-center gap-2 rounded-full border border-border bg-card px-4 py-2 text-xs font-semibold uppercase tracking-widest text-foreground transition hover:border-[var(--cyan-glow)]/50 hover:text-[var(--cyan-glow)]"
           >
             <ArrowLeft className="h-4 w-4" />
+            Dashboard
           </Link>
         </div>
       </header>
