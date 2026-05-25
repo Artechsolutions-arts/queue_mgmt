@@ -24,6 +24,21 @@ export const COUNTER_STATE_LABEL: Record<CounterState, string> = {
   idle: "Idle",
 };
 
+// Derive a zone/department for a counter from its name + location. There's no
+// zone field on the model, so we classify from the text; everything else is OPD.
+export function counterZone(c: Counter): string {
+  const hay = `${c.name} ${c.location_description ?? ""}`.toLowerCase();
+  // Check specific departments before the generic "lab", so a "Cardiac Cath
+  // Lab" classifies as Cardiology rather than Lab.
+  if (/cardio|ecg|echo/.test(hay)) return "Cardiology";
+  if (/endoscop/.test(hay)) return "Endoscopy";
+  if (/radiolog|x-ray|imaging|mri|\bct\b/.test(hay)) return "Radiology";
+  if (/\blab\b|patholog/.test(hay)) return "Lab";
+  if (/emergenc|\ber\b|trauma|casualty/.test(hay)) return "Emergency";
+  if (/pharmac/.test(hay)) return "Pharmacy";
+  return "OPD";
+}
+
 // One-line operational summary for the counter cards.
 export function counterStatusText(c: Counter): string {
   switch (counterState(c)) {
