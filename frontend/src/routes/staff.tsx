@@ -158,14 +158,14 @@ function StaffPage() {
                 icon={CheckCircle2}
                 label={complete.isPending ? "Completing…" : "Complete"}
                 tone="emerald"
-                onClick={() => currentToken && complete.mutate(currentToken.id)}
+                onClick={() => currentToken && complete.mutate(currentToken.number)}
                 disabled={!currentToken || complete.isPending}
               />
               <ActionButton
                 icon={SkipForward}
                 label={noShow.isPending ? "Marking…" : "No-show"}
                 tone="violet"
-                onClick={() => currentToken && noShow.mutate(currentToken.id)}
+                onClick={() => currentToken && noShow.mutate(currentToken.number)}
                 disabled={!currentToken || noShow.isPending}
               />
               <ActionButton icon={AlertOctagon} label="Emergency override" tone="danger" disabled />

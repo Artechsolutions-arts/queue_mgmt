@@ -18,6 +18,22 @@ export class ApiError extends Error {
   }
 }
 
+// Pull a human-readable message out of an ApiError. DRF endpoints return
+// {"error": "..."} (our custom guards), {"detail": "..."}, or field-keyed
+// {"field": ["msg"]} / {"non_field_errors": ["msg"]}.
+export function apiErrorMessage(error: unknown, fallback = "Something went wrong."): string | null {
+  if (!error) return null;
+  if (error instanceof ApiError && error.body && typeof error.body === "object") {
+    const body = error.body as Record<string, unknown>;
+    if (typeof body.error === "string") return body.error;
+    if (typeof body.detail === "string") return body.detail;
+    const first = Object.values(body)[0];
+    const msg = Array.isArray(first) ? first[0] : first;
+    if (typeof msg === "string") return msg;
+  }
+  return error instanceof Error ? error.message || fallback : fallback;
+}
+
 let authToken: string | null = null;
 if (typeof window !== "undefined") {
   authToken = window.localStorage.getItem("helix.auth") || null;
@@ -176,10 +192,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ counter_id: counterId }),
     }),
-  complete: (tokenId: number) =>
-    request<Token>(`/queue/${tokenId}/complete/`, { method: "POST" }),
-  noShow: (tokenId: number) =>
-    request<Token>(`/queue/${tokenId}/no_show/`, { method: "POST" }),
+  // Backend identifies tokens by their number (e.g. "GEN-156"), not the DB id.
+  complete: (tokenNumber: string) =>
+    request<Token>(`/queue/${tokenNumber}/complete/`, { method: "POST" }),
+  noShow: (tokenNumber: string) =>
+    request<Token>(`/queue/${tokenNumber}/no_show/`, { method: "POST" }),
   setCounterActive: (counterId: number, isActive: boolean) =>
     request<Counter>(`/counters/${counterId}/set_active/`, {
       method: "POST",
