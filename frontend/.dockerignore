@@ -1,0 +1,14 @@
+# Never copy host-built deps/artifacts — they carry macOS-native binaries and
+# bloat the build context. bun install runs fresh inside the Linux image.
+node_modules
+.tanstack
+.output
+dist
+.vite
+.gstack
+src/.gstack
+.env
+.env.*
+*.log
+.git
+.DS_Store

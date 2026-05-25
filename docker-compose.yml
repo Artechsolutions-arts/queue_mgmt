@@ -1,0 +1,187 @@
+services:
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.18.0
+    command: mlflow server --backend-store-uri sqlite:///mlflow.db --default-artifact-root /mlflow/artifacts --host 0.0.0.0
+    ports:
+      - "5000:5000"
+    volumes:
+      - mlflow_data:/mlflow
+    networks:
+      - backend
+
+  migrate:
+    build: ./services/queue
+    command: python manage.py migrate --noinput
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:-secret}
+      - DJANGO_DEBUG=True
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: "no"
+    networks:
+      - backend
+
+  queue-service:
+    build: ./services/queue
+    command: daphne -b 0.0.0.0 -p 8000 queue_root.asgi:application
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=redis://redis:6379/0
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:-secret}
+      - DJANGO_DEBUG=True
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:5174,http://localhost:5175}
+      - STAFF_USERNAME=${STAFF_USERNAME:-staff}
+      - STAFF_PASSWORD=${STAFF_PASSWORD:-staffpass123}
+      - THROTTLE_ANON=${THROTTLE_ANON:-60/min}
+      - THROTTLE_USER=${THROTTLE_USER:-600/min}
+      - THROTTLE_LOGIN=${THROTTLE_LOGIN:-10/min}
+      - THROTTLE_REGISTER=${THROTTLE_REGISTER:-20/min}
+      - THROTTLE_STATUS=${THROTTLE_STATUS:-120/min}
+      - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN}
+      - TWILIO_STATUS_CALLBACK_URL=${TWILIO_STATUS_CALLBACK_URL:-}
+    ports:
+      - "8000:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/healthz/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - backend
+
+  vision-service:
+    build: ./services/vision
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - VIDEO_SOURCE=${VIDEO_SOURCE:-test_video.mp4}
+      - ZONE_ID=main_waiting_area
+    volumes:
+      - vision_assets:/app/vision_assets
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+
+  vision-consumer:
+    build: ./services/queue
+    command: python manage.py vision_consumer
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=redis://redis:6379/0
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      disable: true
+    networks:
+      - backend
+
+  prediction-service:
+    build: ./services/prediction
+    ports:
+      - "8001:8001"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    depends_on:
+      redis:
+        condition: service_healthy
+      mlflow:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - backend
+
+  notification-service:
+    build: ./services/notification
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID}
+      - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN}
+      - TWILIO_WHATSAPP_NUMBER=${TWILIO_WHATSAPP_NUMBER}
+      - TWILIO_FROM_NUMBER=${TWILIO_FROM_NUMBER}
+      - TWILIO_ONLY_SEND_TO=${TWILIO_ONLY_SEND_TO:-}
+      - TWILIO_WHATSAPP_CONTENT_SID=${TWILIO_WHATSAPP_CONTENT_SID:-}
+      - META_WHATSAPP_TOKEN=${META_WHATSAPP_TOKEN:-}
+      - META_PHONE_NUMBER_ID=${META_PHONE_NUMBER_ID:-}
+      - NOTIFICATION_MOCK_ENABLED=${NOTIFICATION_MOCK_ENABLED:-true}
+      - NOTIFICATION_LOG_BODIES=${NOTIFICATION_LOG_BODIES:-true}
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+
+  retraining-service:
+    build: ./services/retraining
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      mlflow:
+        condition: service_started
+    networks:
+      - backend
+
+  # Unified SmartQueue frontend (TanStack Start). One app serving all views as
+  # routes: Command Center (/), Staff Operations (/staff), Public Display
+  # (/display), Notifications (/notifications), System Health (/system), etc.
+  # Replaces the former staff-dashboard / patient-portal / waiting-display stubs.
+  frontend:
+    build: ./frontend
+    ports:
+      - "5173:5173"
+    environment:
+      # Browser-facing URLs — resolved from the host, so localhost (not the
+      # compose service name) is correct here.
+      - VITE_API_BASE=http://localhost:8000/api
+      - VITE_WS_URL=ws://localhost:8000/ws/queue/
+    volumes:
+      # Bind-mount source so Vite HMR serves host edits live (no rebuild per
+      # change). The anonymous volume shadows node_modules so the container
+      # keeps its Linux-native deps instead of the host's macOS builds.
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      queue-service:
+        condition: service_healthy
+    networks:
+      - backend
+
+networks:
+  backend:
+    driver: bridge
+
+volumes:
+  redis_data:
+  mlflow_data:
+  vision_assets:

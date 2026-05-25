@@ -1,0 +1,44 @@
+# Secrets
+.env
+.env.local
+.env.*.local
+# Local agent/editor config — holds machine-local secrets (Twilio token, DB pw)
+.claude/
+# Scratch/experiment files (may hold tokens)
+scratch.py
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+htmlcov/
+.coverage
+.mypy_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+dist/
+.vite/
+.tanstack/
+.output/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Project artefacts
+mlruns/
+mlflow.db
+models/*.json
+data/raw/
+data/processed/
+services/vision/assets/
+services/vision/*.mp4
+services/vision/*.caffemodel
+services/vision/deploy.prototxt
+.gstack/
