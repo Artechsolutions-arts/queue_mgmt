@@ -410,6 +410,20 @@ class QueueViewSet(viewsets.ViewSet):
                 token.status = 'IN_PROGRESS'
                 token.service_start_at = timezone.now()
                 token.save()
+
+                # Turn-by-turn: tell the patient it's their turn at this counter.
+                if r:
+                    r.xadd("queue.events", {
+                        "type": "token.called",
+                        "token_number": token.number,
+                        "patient_name": token.patient_name,
+                        "phone_number": token.phone_number,
+                        "counter_name": counter.name,
+                        "counter_location": counter.location_description or "",
+                        "service_type_name": token.service_type.name if token.service_type else "",
+                        "is_simulated": "false",
+                    }, maxlen=10000)
+
                 # A slot just freed up at `counter` — try to pull a patient
                 # from any busier sibling counter that can serve the same kind
                 # of test/service.
@@ -425,6 +439,23 @@ class QueueViewSet(viewsets.ViewSet):
             token.status = 'COMPLETED'
             token.completed_at = timezone.now()
             token.save()
+
+            # Turn-by-turn: if the patient still has open tokens it's a step
+            # update; if this was their last one, it's the whole-visit wrap-up.
+            if r:
+                more = Token.objects.filter(
+                    phone_number=token.phone_number,
+                    status__in=['WAITING', 'IN_PROGRESS'],
+                ).exists()
+                r.xadd("queue.events", {
+                    "type": "token.completed" if more else "visit.completed",
+                    "token_number": token.number,
+                    "patient_name": token.patient_name,
+                    "phone_number": token.phone_number,
+                    "service_type_name": token.service_type.name if token.service_type else "",
+                    "is_simulated": "false",
+                }, maxlen=10000)
+
             return Response(TokenSerializer(token).data)
         except Token.DoesNotExist:
             return Response({"error": "Token not found"}, status=status.HTTP_404_NOT_FOUND)

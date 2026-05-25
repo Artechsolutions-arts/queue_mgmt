@@ -5,6 +5,13 @@ Reads `queue.events` via a Redis consumer group so messages survive
 worker restarts. Successful sends are XACK'd; failures stay on the
 pending list until manual replay or the group's idle-claim retry.
 
+Patient experience is step-by-step (turn-by-turn), never a journey dump:
+  token.created / token.bundle.created -> check-in confirmation
+  token.called                         -> "it's your turn, go to X"
+  token.completed                      -> "that step is done, next coming"
+  visit.completed                      -> "all done, take care"
+  token.redirected                     -> "faster route found"
+
 Production-mode contract:
 * Twilio creds present => live mode.
 * Missing creds + NOTIFICATION_MOCK_ENABLED=true => mock mode (dev only).
@@ -40,23 +47,13 @@ CONSUMER = os.getenv("NOTIFICATION_CONSUMER", socket.gethostname())
 MAX_RETRIES = int(os.getenv("NOTIFY_MAX_RETRIES", "2"))
 BATCH = int(os.getenv("NOTIFICATION_BATCH", "10"))
 BLOCK_MS = int(os.getenv("NOTIFICATION_BLOCK_MS", "5000"))
-WHATSAPP_CONTENT_SID = os.getenv("TWILIO_WHATSAPP_CONTENT_SID", "").strip()
-# Template for the multi-token (register-multi) bundle. Required to reach a
-# patient outside the 24h customer-care window on a production WhatsApp sender,
-# since every new registration is a first contact. When unset, the bundle path
-# falls back to a free-form message (works in the sandbox / inside 24h only).
-WHATSAPP_BUNDLE_CONTENT_SID = os.getenv("TWILIO_WHATSAPP_BUNDLE_CONTENT_SID", "").strip()
-# Approx minutes per patient at a counter — used to translate queue depth into
-# an "estimated wait" figure in the bundle message. Tune via env.
-SERVICE_MINUTES_PER_PATIENT = int(os.getenv("SERVICE_MINUTES_PER_PATIENT", "5"))
-
-
-def _wait_label(depth: int) -> str:
-    """Render a queue depth as 'no wait', '5 min', '15 min' for patient-facing copy."""
-    if depth <= 0:
-        return "no wait — counter is empty"
-    mins = depth * SERVICE_MINUTES_PER_PATIENT
-    return f"{depth} ahead, ~{mins} min wait"
+# Display name used to sign off patient messages.
+FACILITY_NAME = os.getenv("FACILITY_NAME", "St. Aurelia Medical")
+# How to use SMS alongside WhatsApp (the premium primary channel):
+#   fallback (default) — SMS only if the WhatsApp send can't be accepted
+#   always             — send both every time (noisy; duplicate notifications)
+#   off                — WhatsApp only, never SMS
+SMS_MODE = os.getenv("NOTIFICATION_SMS_MODE", "fallback").strip().lower()
 
 
 class NotificationWorker:
@@ -91,287 +88,182 @@ class NotificationWorker:
     def request_stop(self) -> None:
         self._stop.set()
 
-    # ----- send-with-retry --------------------------------------------------
+    # ----- shared sender ----------------------------------------------------
 
-    async def deliver(self, data: dict) -> None:
-        token = data.get('token_number', 'N/A')
-        phone = data.get('phone_number', '')
-        masked = mask_phone(phone)
-        is_simulated = data.get('is_simulated') == 'true'
-
-        if not phone:
-            logger.error("No phone number on event token=%s", token)
-            return
-
-        if is_simulated:
-            logger.info("[SIMULATED] Bypassed live notifications for token=%s phone=%s (Simulated registration)", token, masked)
-            return
-
-        body = (
-            f"Hi {data.get('patient_name', 'Patient')}, your token is {token}. "
-            f"Estimated wait: {data.get('estimated_wait', '15')} min. "
-            f"Fastest counter: {data.get('counter_id', '1')}. "
-            f"Directions: {data.get('directions', 'Proceed to the main counter.')}."
-        )
-
+    async def _send(self, phone: str, masked: str, body: str, label: str) -> None:
+        """Deliver one patient notification. WhatsApp is the primary channel and
+        keeps the *bold* markup. SMS is sent per NOTIFICATION_SMS_MODE — by
+        default only as a fallback when WhatsApp can't be accepted, so patients
+        aren't double-notified. 'ok' means Twilio accepted (queued) the message;
+        final delivery arrives via the status callback."""
         loop = asyncio.get_running_loop()
 
-        async def run_whatsapp():
-            if WHATSAPP_CONTENT_SID:
-                import json
-                eta = data.get('estimated_wait', data.get('eta_minutes', '15'))
-                eta_str = f"{eta} min" if not str(eta).endswith("min") else str(eta)
-                service_name = data.get('service_type_name', 'Test')
-                
-                if WHATSAPP_CONTENT_SID == "HXb5b62575e6e4ff6129ad7c8efe1f983e":
-                    content_vars = json.dumps({
-                        "1": service_name,
-                        "2": f"{eta_str} (Token: {token})"
-                    })
-                else:
-                    directions_str = data.get('directions', 'Please wait for your turn.')
-                    content_vars = json.dumps({
-                        "1": service_name,
-                        "2": token,
-                        "3": eta_str,
-                        "4": directions_str
-                    })
-                logger.info("WhatsApp attempt to=%s token=%s content_sid=%s", masked, token, WHATSAPP_CONTENT_SID)
-                wa_result = await loop.run_in_executor(
-                    None,
-                    lambda: self.client.send_whatsapp(
-                        to_number=phone,
-                        content_sid=WHATSAPP_CONTENT_SID,
-                        content_variables=content_vars
-                    )
-                )
-                if wa_result.ok:
-                    # ok == Twilio accepted/queued the message, NOT confirmed delivery.
-                    # True delivery (or failure, e.g. 63015) arrives async via the
-                    # TWILIO_STATUS_CALLBACK_URL webhook — don't claim "delivered" here.
-                    logger.info("WhatsApp template accepted by Twilio (queued) to=%s token=%s sid=%s", masked, token, wa_result.sid)
-                else:
-                    logger.error("WhatsApp template failed to=%s token=%s err=%s", masked, token, wa_result.error)
-            else:
-                logger.info("WhatsApp free-form attempt to=%s token=%s", masked, token)
-                wa_result = await loop.run_in_executor(
-                    None,
-                    lambda: self.client.send_whatsapp(to_number=phone, message=body)
-                )
-                if wa_result.ok:
-                    logger.info("WhatsApp free-form accepted by Twilio (queued) to=%s token=%s sid=%s", masked, token, wa_result.sid)
-                else:
-                    logger.error("WhatsApp free-form failed to=%s token=%s err=%s", masked, token, wa_result.error)
+        wa = await loop.run_in_executor(
+            None, lambda: self.client.send_whatsapp(to_number=phone, message=body)
+        )
+        if wa.ok:
+            logger.info("%s WhatsApp accepted (queued) to=%s sid=%s", label, masked, wa.sid)
+        else:
+            logger.error("%s WhatsApp failed to=%s err=%s", label, masked, wa.error)
 
-        async def run_sms():
-            for attempt in range(MAX_RETRIES + 1):
-                logger.info("SMS attempt %d to=%s token=%s", attempt + 1, masked, token)
-                result = await loop.run_in_executor(
-                    None,
-                    lambda: self.client.send_sms(phone, body)
-                )
-                if result.ok:
-                    logger.info("SMS accepted by Twilio (queued) to=%s token=%s sid=%s", masked, token, result.sid)
-                    return
-                if not result.retriable:
-                    logger.error(
-                        "SMS short-circuited (non-retriable) to=%s token=%s code=%s err=%s",
-                        masked, token, result.error_code, result.error,
-                    )
-                    return
-                if attempt < MAX_RETRIES:
-                    await asyncio.sleep(2 ** attempt)
-            logger.error("SMS exhausted to=%s token=%s err=%s", masked, token, result.error)
-
-        await asyncio.gather(run_whatsapp(), run_sms())
-
-    # ----- bundle (multi-token) delivery ------------------------------------
-
-    async def deliver_bundle(self, data: dict) -> None:
-        """Single combined SMS + WhatsApp summarising every token issued in
-        one register-multi call. Replaces the N spammy per-token sends."""
-        phone = data.get('phone_number', '')
-        masked = mask_phone(phone)
-        is_simulated = data.get('is_simulated') == 'true'
-        patient_name = data.get('patient_name', 'Patient')
-
-        if not phone:
-            logger.error("Bundle event has no phone number — skipping")
+        if SMS_MODE == "off":
+            return
+        if SMS_MODE != "always" and wa.ok:
+            # WhatsApp accepted and SMS is fallback-only — skip the duplicate.
             return
 
+        sms_body = body.replace("*", "")
+        result = None
+        for attempt in range(MAX_RETRIES + 1):
+            result = await loop.run_in_executor(
+                None, lambda: self.client.send_sms(phone, sms_body)
+            )
+            if result.ok:
+                logger.info("%s SMS accepted (queued) to=%s sid=%s", label, masked, result.sid)
+                return
+            if not result.retriable:
+                logger.error(
+                    "%s SMS short-circuited (non-retriable) to=%s code=%s err=%s",
+                    label, masked, result.error_code, result.error,
+                )
+                return
+            if attempt < MAX_RETRIES:
+                await asyncio.sleep(2 ** attempt)
+        logger.error("%s SMS exhausted to=%s err=%s", label, masked, result.error if result else "?")
+
+    @staticmethod
+    def _skip(data: dict, what: str) -> bool:
+        """Common guards: no phone => log+skip; simulated => bypass live sends."""
+        if not data.get('phone_number'):
+            logger.error("%s event missing phone — skipping", what)
+            return True
+        if data.get('is_simulated') == 'true':
+            logger.info("[SIMULATED] %s bypassed token=%s", what, data.get('token_number', '?'))
+            return True
+        return False
+
+    # ----- check-in confirmation (single) -----------------------------------
+
+    async def deliver(self, data: dict) -> None:
+        if self._skip(data, "Registration"):
+            return
+        phone = data['phone_number']
+        token = data.get('token_number', 'your number')
+        name = data.get('patient_name', 'there')
+        body = (
+            f"✅ You're checked in, {name}\n\n"
+            f"Your number is *{token}*\n\n"
+            "No need to queue — just take a seat.\n"
+            "I'll message you the moment it's your turn."
+        )
+        await self._send(phone, mask_phone(phone), body, f"Registration token={token}")
+
+    # ----- check-in confirmation (multi-service) ----------------------------
+
+    async def deliver_bundle(self, data: dict) -> None:
+        """Check-in confirmation for a register-multi visit. We confirm and
+        reassure — we do NOT list the whole journey. Each stop is guided
+        step-by-step as counters call the patient."""
+        if self._skip(data, "Registration"):
+            return
+        phone = data['phone_number']
+        name = data.get('patient_name', 'there')
         try:
             tokens = json.loads(data.get('tokens_json', '[]'))
         except json.JSONDecodeError as exc:
-            logger.error("Bundle event tokens_json malformed: %s", exc)
+            logger.error("Bundle tokens_json malformed: %s", exc)
             return
-
         if not tokens:
             logger.info("Bundle event with no tokens — skipping")
             return
 
-        if is_simulated:
-            logger.info(
-                "[SIMULATED] Bundle bypassed for phone=%s tokens=%d",
-                masked, len(tokens),
+        masked = mask_phone(phone)
+        if len(tokens) == 1:
+            t = tokens[0]
+            body = (
+                f"✅ You're checked in, {name}\n\n"
+                f"Your number is *{t['number']}*\n\n"
+                "No need to queue — just take a seat.\n"
+                "I'll message you the moment it's your turn."
             )
-            return
-
-        # Sort tokens by active queue depth ascending (shortest wait first)
-        sorted_tokens = sorted(tokens, key=lambda x: int(x.get('queue_depth', 0)))
-
-        # Compose a single readable body covering all tokens in recommended sequence.
-        if len(sorted_tokens) > 1:
-            lines = [f"Hi {patient_name}, here's the fastest order for your visits today:"]
-            for index, t in enumerate(sorted_tokens, 1):
-                loc = f" ({t['counter_location']})" if t.get('counter_location') else ""
-                wait = _wait_label(int(t.get('queue_depth', 0)))
-                lines.append(
-                    f"{index}. {t['service_name']} (Token: {t['number']}) → {t['counter_name']}{loc} — {wait}"
-                )
-            # Highlight the wait-saving if first stop is meaningfully shorter than last.
-            first_depth = int(sorted_tokens[0].get('queue_depth', 0))
-            last_depth = int(sorted_tokens[-1].get('queue_depth', 0))
-            if last_depth - first_depth >= 2:
-                saved_min = (last_depth - first_depth) * SERVICE_MINUTES_PER_PATIENT
-                lines.append(
-                    f"Tip: starting at {sorted_tokens[0]['counter_name']} first saves you about "
-                    f"{saved_min} min — do the quick stops while {sorted_tokens[-1]['counter_name']} queue moves."
-                )
-            lines.append("Visit in this order. Each counter calls you when ready.")
         else:
-            t = sorted_tokens[0]
-            loc = f" ({t['counter_location']})" if t.get('counter_location') else ""
-            wait = _wait_label(int(t.get('queue_depth', 0)))
-            lines = [
-                f"Hi {patient_name}, your token for {t['service_name']} is {t['number']}.",
-                f"Please proceed to {t['counter_name']}{loc} — {wait}."
-            ]
-        body = "\n".join(lines)
+            # Mention the quickest first stop, but never the full list.
+            first = min(tokens, key=lambda x: int(x.get('queue_depth', 0)))
+            body = (
+                f"✅ You're checked in, {name}\n\n"
+                f"You have *{len(tokens)} steps* today.\n"
+                f"First up: {first.get('service_name', 'your first visit')}.\n\n"
+                "No need to queue — I'll guide you to each one,\n"
+                "one step at a time."
+            )
+        await self._send(phone, masked, body, f"Registration tokens={len(tokens)}")
 
-        loop = asyncio.get_running_loop()
+    # ----- counter ready (it's your turn) -----------------------------------
 
-        async def run_whatsapp():
-            if WHATSAPP_BUNDLE_CONTENT_SID:
-                # Template path. WhatsApp rejects newlines/tabs in template
-                # parameters, so every variable is a single line. The approved
-                # template body should reference these four variables:
-                #   {{1}} patient name
-                #   {{2}} number of tokens issued (e.g. "3")
-                #   {{3}} recommended first stop
-                #   {{4}} all stops on one line
-                first = sorted_tokens[0]
-                first_loc = f" ({first['counter_location']})" if first.get('counter_location') else ""
-                first_stop = f"{first['service_name']} (Token {first['number']}) at {first['counter_name']}{first_loc}"
-                all_stops = " | ".join(
-                    f"{t['service_name']} {t['number']} → {t['counter_name']}"
-                    for t in sorted_tokens
-                )
-                content_vars = json.dumps({
-                    "1": patient_name,
-                    "2": str(len(sorted_tokens)),
-                    "3": first_stop,
-                    "4": all_stops,
-                })
-                logger.info(
-                    "Bundle WhatsApp template attempt to=%s tokens=%d content_sid=%s",
-                    masked, len(tokens), WHATSAPP_BUNDLE_CONTENT_SID,
-                )
-                wa_result = await loop.run_in_executor(
-                    None,
-                    lambda: self.client.send_whatsapp(
-                        to_number=phone,
-                        content_sid=WHATSAPP_BUNDLE_CONTENT_SID,
-                        content_variables=content_vars,
-                    ),
-                )
-            else:
-                logger.info("Bundle WhatsApp free-form attempt to=%s tokens=%d", masked, len(tokens))
-                wa_result = await loop.run_in_executor(
-                    None,
-                    lambda: self.client.send_whatsapp(to_number=phone, message=body)
-                )
-            if wa_result.ok:
-                logger.info(
-                    "Bundle WhatsApp accepted by Twilio (queued) to=%s tokens=%d sid=%s",
-                    masked, len(tokens), wa_result.sid,
-                )
-            else:
-                logger.error(
-                    "Bundle WhatsApp failed to=%s tokens=%d err=%s",
-                    masked, len(tokens), wa_result.error,
-                )
+    async def deliver_called(self, data: dict) -> None:
+        if self._skip(data, "Counter-ready"):
+            return
+        phone = data['phone_number']
+        name = data.get('patient_name', 'there')
+        counter = data.get('counter_name', 'your counter')
+        location = data.get('counter_location', '')
+        body = (
+            f"🔔 It's your turn, {name}\n\n"
+            f"Please go to *{counter}* now."
+            + (f"\n{location}" if location else "")
+        )
+        await self._send(phone, mask_phone(phone), body, f"Counter-ready token={data.get('token_number','?')}")
 
-        async def run_sms():
-            for attempt in range(MAX_RETRIES + 1):
-                logger.info("Bundle SMS attempt %d to=%s tokens=%d", attempt + 1, masked, len(tokens))
-                result = await loop.run_in_executor(
-                    None,
-                    lambda: self.client.send_sms(phone, body)
-                )
-                if result.ok:
-                    logger.info(
-                        "Bundle SMS accepted by Twilio (queued) to=%s tokens=%d sid=%s",
-                        masked, len(tokens), result.sid,
-                    )
-                    return
-                if not result.retriable:
-                    logger.error(
-                        "Bundle SMS short-circuited (non-retriable) to=%s tokens=%d code=%s err=%s",
-                        masked, len(tokens), result.error_code, result.error,
-                    )
-                    return
-                if attempt < MAX_RETRIES:
-                    await asyncio.sleep(2 ** attempt)
-        await asyncio.gather(run_whatsapp(), run_sms())
+    # ----- step complete (more to go) ---------------------------------------
 
-    # ----- redirect (load-balance) notification ----------------------------
+    async def deliver_test_done(self, data: dict) -> None:
+        if self._skip(data, "Step-complete"):
+            return
+        phone = data['phone_number']
+        name = data.get('patient_name', 'there')
+        service = data.get('service_type_name') or 'That step'
+        body = (
+            f"✅ {service} done\n\n"
+            f"That's one step complete, {name}.\n\n"
+            "Relax for a moment —\n"
+            "I'll send your next stop shortly."
+        )
+        await self._send(phone, mask_phone(phone), body, f"Step-done token={data.get('token_number','?')}")
+
+    # ----- visit complete (all done) ----------------------------------------
+
+    async def deliver_visit_complete(self, data: dict) -> None:
+        if self._skip(data, "Visit-complete"):
+            return
+        phone = data['phone_number']
+        name = data.get('patient_name', 'there')
+        body = (
+            f"💙 All done, {name}\n\n"
+            "Your visit is complete.\n"
+            "Take care and get well soon.\n\n"
+            f"— {FACILITY_NAME}"
+        )
+        await self._send(phone, mask_phone(phone), body, "Visit-complete")
+
+    # ----- AI reroute (load-balance) ----------------------------------------
 
     async def deliver_redirect(self, data: dict) -> None:
-        """Tell a patient their token was moved to a less-busy counter."""
-        phone = data.get('phone_number', '')
-        masked = mask_phone(phone)
-        if not phone:
-            logger.error("Redirect event missing phone — skipping")
+        """Tell a patient the assistant moved them to a less-busy counter."""
+        if self._skip(data, "Reroute"):
             return
-        if data.get('is_simulated') == 'true':
-            logger.info("[SIMULATED] Redirect bypass token=%s", data.get('token_number', '?'))
-            return
-
-        token_number = data.get('token_number', '?')
-        old_counter = data.get('old_counter_name', 'previous counter')
-        new_counter = data.get('new_counter_name', 'a different counter')
+        phone = data['phone_number']
+        name = data.get('patient_name', 'there')
+        old_counter = data.get('old_counter_name', 'that counter')
+        new_counter = data.get('new_counter_name', 'a quicker counter')
         location = data.get('new_counter_location', '')
-        service = data.get('service_type_name', '')
-
         body = (
-            f"Good news! Your token {token_number}"
-            f"{' (' + service + ')' if service else ''}"
-            f" has been moved from {old_counter} to {new_counter}"
-            f"{' — ' + location if location else ''}."
-            " Please head there instead — the queue is shorter."
+            f"✨ Faster route found, {name}\n\n"
+            f"{old_counter} is busy right now,\n"
+            "so I've moved you to a quicker one.\n\n"
+            f"Now heading to\n*{new_counter}*"
+            + (f"\n{location}" if location else "")
         )
-
-        loop = asyncio.get_running_loop()
-        logger.info("Redirect WhatsApp attempt to=%s token=%s", masked, token_number)
-        wa_result = await loop.run_in_executor(None, lambda: self.client.send_whatsapp(to_number=phone, message=body))
-        if wa_result.ok:
-            logger.info("Redirect WhatsApp accepted by Twilio (queued) to=%s token=%s sid=%s", masked, token_number, wa_result.sid)
-        else:
-            logger.error("Redirect WhatsApp failed to=%s token=%s err=%s", masked, token_number, wa_result.error)
-
-        for attempt in range(MAX_RETRIES + 1):
-            logger.info("Redirect SMS attempt %d to=%s token=%s", attempt + 1, masked, token_number)
-            result = await loop.run_in_executor(None, lambda: self.client.send_sms(phone, body))
-            if result.ok:
-                logger.info("Redirect SMS accepted by Twilio (queued) to=%s token=%s sid=%s", masked, token_number, result.sid)
-                return
-            if not result.retriable:
-                logger.error("Redirect SMS short-circuited to=%s token=%s code=%s err=%s", masked, token_number, result.error_code, result.error)
-                return
-            if attempt < MAX_RETRIES:
-                await asyncio.sleep(2 ** attempt)
-        logger.error("Redirect SMS exhausted to=%s token=%s err=%s", masked, token_number, result.error)
-
+        await self._send(phone, mask_phone(phone), body, f"Reroute token={data.get('token_number','?')}")
 
     # ----- main read loop ---------------------------------------------------
 
@@ -385,6 +277,15 @@ class NotificationWorker:
             GROUP, CONSUMER, STREAM, BATCH,
         )
         loop = asyncio.get_running_loop()
+
+        handlers = {
+            'token.created': self.deliver,
+            'token.bundle.created': self.deliver_bundle,
+            'token.called': self.deliver_called,
+            'token.completed': self.deliver_test_done,
+            'visit.completed': self.deliver_visit_complete,
+            'token.redirected': self.deliver_redirect,
+        }
 
         while not self._stop.is_set():
             try:
@@ -401,18 +302,14 @@ class NotificationWorker:
                 for _stream, messages in streams:
                     for message_id, raw in messages:
                         decoded = {k.decode(): v.decode() for k, v in raw.items()}
-                        event_type = decoded.get('type')
-                        try:
-                            if event_type == 'token.created':
-                                await self.deliver(decoded)
-                            elif event_type == 'token.bundle.created':
-                                await self.deliver_bundle(decoded)
-                            elif event_type == 'token.redirected':
-                                await self.deliver_redirect(decoded)
-                        except Exception as exc:
-                            logger.exception("Delivery handler crashed: %s", exc)
-                            # Leave the message un-acked so a retry/replay can pick it up.
-                            continue
+                        handler = handlers.get(decoded.get('type'))
+                        if handler is not None:
+                            try:
+                                await handler(decoded)
+                            except Exception as exc:
+                                logger.exception("Delivery handler crashed: %s", exc)
+                                # Leave the message un-acked for a retry/replay.
+                                continue
                         # ack on success (or non-target event) so the PEL stays small.
                         try:
                             self.r.xack(STREAM, GROUP, message_id)
