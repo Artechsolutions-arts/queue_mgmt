@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { AppShell } from "@/components/layout/AppShell";
 import { Panel, PanelHeader } from "@/components/ui/panel";
 import { motion } from "framer-motion";
-import { PhoneCall, SkipForward, AlertOctagon, CheckCircle2, Users, Clock, Gauge, TrendingUp, Building2 } from "lucide-react";
+import { PhoneCall, SkipForward, AlertOctagon, CheckCircle2, Users, Clock, Gauge, TrendingUp, Building2, Download } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
   useCounters,
@@ -47,6 +47,44 @@ function StaffPage() {
     : "No counters available";
 
   const otherCounters = (counters ?? []).filter((c) => c.id !== counter?.id);
+
+  // Download the currently-filtered service history as a CSV (client-side).
+  const exportHistoryCsv = () => {
+    const rows = history ?? [];
+    if (rows.length === 0) return;
+    const headers = ["Token", "Patient", "Phone", "Service", "Counter", "Status", "Created", "Completed", "Wait (min)"];
+    const esc = (v: unknown) => {
+      const s = v == null ? "" : String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const lines = [headers.join(",")];
+    for (const t of rows) {
+      lines.push(
+        [
+          t.number,
+          t.patient_name,
+          t.phone_number,
+          t.service_type_name ?? "",
+          t.counter_name ?? "",
+          t.status,
+          t.created_at,
+          t.completed_at ?? "",
+          t.actual_wait_minutes != null ? t.actual_wait_minutes.toFixed(2) : "",
+        ]
+          .map(esc)
+          .join(","),
+      );
+    }
+    const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `service-history-${historyStatus.toLowerCase()}-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <AppShell title="Staff Operations Console" subtitle={subtitle}>
@@ -219,9 +257,18 @@ function StaffPage() {
                 {label}
               </button>
             ))}
-            <span className="ml-auto text-[10px] uppercase tracking-widest text-muted-foreground">
-              {history?.length ?? 0} records
-            </span>
+            <div className="ml-auto flex items-center gap-3">
+              <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
+                {history?.length ?? 0} records
+              </span>
+              <button
+                onClick={exportHistoryCsv}
+                disabled={(history?.length ?? 0) === 0}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-1.5 text-[11px] text-foreground transition hover:bg-muted/60 disabled:opacity-40"
+              >
+                <Download className="h-3.5 w-3.5" /> Export CSV
+              </button>
+            </div>
           </div>
           <div className="max-h-[440px] overflow-y-auto">
             <table className="w-full text-left text-sm">
