@@ -79,6 +79,3 @@ python scripts/simulate_queue.py
 - **JWT Auth**: Planned for production endpoints.
 - **One-way Push**: Patients have no portal/login; they only receive push notifications.
 - **Privacy Masking**: Public displays use `Name I.` format.
-
----
-Developed by Antigravity for Healthcare Excellence.
