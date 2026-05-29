@@ -13,15 +13,22 @@ function DisplayPage() {
   const { data: counters } = useCounters();
   const { data: stats } = useDashboard();
 
-  // Pick the busiest active counter to feature on the public board.
+  const active = counters?.filter((c) => c.is_active) ?? [];
+  // Feature the busiest counter that is ACTUALLY serving someone. A counter
+  // with people waiting but nobody called yet must not show "proceed to X" —
+  // that sends patients to an empty counter.
   const featured =
-    counters
-      ?.filter((c) => c.is_active)
-      .sort((a, b) => b.queue_depth - a.queue_depth)[0] ?? counters?.[0];
+    [...active]
+      .filter((c) => c.current_token)
+      .sort((a, b) => b.queue_depth - a.queue_depth)[0] ?? null;
+  // For "Up Next", fall back to the busiest queue so waiting patients still
+  // show even when nobody is being called this instant.
+  const upNextSource =
+    featured ?? [...active].sort((a, b) => b.queue_depth - a.queue_depth)[0] ?? null;
 
-  const now = featured?.current_token ?? "—";
-  const next = featured?.next_tokens ?? [];
-  const counterLabel = featured?.name ?? "—";
+  const now = featured?.current_token ?? null;
+  const next = upNextSource?.next_tokens ?? [];
+  const counterLabel = featured?.name ?? null;
   const etaMin = stats?.avg_wait_minutes ?? null;
 
   return (
@@ -63,17 +70,26 @@ function DisplayPage() {
             <div className="pointer-events-none absolute -top-20 left-1/2 h-60 w-[480px] -translate-x-1/2 rounded-full bg-[var(--cyan-glow)] opacity-30 blur-3xl" />
             <AnimatePresence mode="wait">
               <motion.div
-                key={now}
+                key={now ?? "idle"}
                 initial={{ opacity: 0, scale: 0.92, y: 24 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 1.04, y: -24 }}
                 transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
                 className="relative"
               >
-                <div className="font-mono text-[180px] font-bold leading-none tracking-tight text-foreground" style={{ textShadow: "0 0 60px var(--cyan-glow)" }}>
-                  {now}
-                </div>
-                <div className="mt-4 text-2xl text-muted-foreground">Please proceed to <span className="font-semibold text-gradient-primary">{counterLabel}</span></div>
+                {now ? (
+                  <>
+                    <div className="font-mono text-[180px] font-bold leading-none tracking-tight text-foreground" style={{ textShadow: "0 0 60px var(--cyan-glow)" }}>
+                      {now}
+                    </div>
+                    <div className="mt-4 text-2xl text-muted-foreground">Please proceed to <span className="font-semibold text-gradient-primary">{counterLabel}</span></div>
+                  </>
+                ) : (
+                  <>
+                    <div className="font-mono text-[120px] font-bold leading-none tracking-tight text-muted-foreground/40">—</div>
+                    <div className="mt-4 text-2xl text-muted-foreground">Waiting for the next patient to be called</div>
+                  </>
+                )}
               </motion.div>
             </AnimatePresence>
           </div>
