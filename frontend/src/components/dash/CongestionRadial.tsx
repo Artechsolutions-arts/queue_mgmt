@@ -1,5 +1,12 @@
 import { RadialBar, RadialBarChart, ResponsiveContainer, PolarAngleAxis } from "recharts";
 
+function riskLevel(score: number): { label: string; color: string } {
+  if (score >= 76) return { label: "Critical", color: "var(--danger)" };
+  if (score >= 51) return { label: "High",     color: "var(--warn)" };
+  if (score >= 26) return { label: "Moderate", color: "var(--cyan-glow)" };
+  return              { label: "Low",      color: "var(--emerald-glow)" };
+}
+
 export function CongestionRadial({ score = 64 }: { score?: number }) {
   const data = [{ name: "score", value: score, fill: "url(#radial)" }];
   return (
@@ -18,9 +25,9 @@ export function CongestionRadial({ score = 64 }: { score?: number }) {
         </RadialBarChart>
       </ResponsiveContainer>
       <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-        <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Risk Index</div>
-        <div className="mt-1 text-4xl font-semibold tabular-nums text-foreground">{score}</div>
-        <div className="text-[11px] font-medium text-[var(--cyan-glow)]">Moderate</div>
+        <div className="text-[12px] uppercase tracking-widest text-muted-foreground">Risk Index</div>
+        <div className="mt-1 text-[38px] font-semibold tabular-nums text-foreground">{score}</div>
+        <div className="text-[13px] font-medium" style={{ color: riskLevel(score).color }}>{riskLevel(score).label}</div>
       </div>
     </div>
   );

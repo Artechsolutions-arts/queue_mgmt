@@ -1,4 +1,5 @@
 from django.db import models
+from django.db.models import Q
 from django.utils import timezone
 
 
@@ -14,7 +15,7 @@ class Patient(models.Model):
     @property
     def patient_id(self) -> str:
         """Display ID such as P-000123 — derived from PK so it's stable + sortable."""
-        return f"P-{self.pk:06d}"
+        return f"P-{self.pk:03d}"
 
     def __str__(self):
         return f"{self.patient_id} {self.name}"
@@ -50,6 +51,7 @@ class Token(models.Model):
         ('WAITING', 'Waiting'),
         ('IN_PROGRESS', 'In Progress'),
         ('COMPLETED', 'Completed'),
+        ('NO_SHOW', 'No Show'),
         ('CANCELLED', 'Cancelled'),
     ]
 
@@ -71,7 +73,22 @@ class Token(models.Model):
     completed_at = models.DateTimeField(null=True, blank=True)
     predicted_wait_minutes = models.IntegerField(default=0)
     medical_notes = models.TextField(blank=True, null=True, help_text="Additional tests needed, disease history, etc.")
+    visit = models.ForeignKey(
+        'PatientVisit', on_delete=models.SET_NULL, null=True, blank=True, related_name='tokens'
+    )
     
+    class Meta:
+        constraints = [
+            # Enforce at the DB level that at most one token per counter can be
+            # IN_PROGRESS at a time. The app-level check in call_next is the
+            # first line of defence; this partial index is the backstop.
+            models.UniqueConstraint(
+                fields=['counter'],
+                condition=Q(status='IN_PROGRESS'),
+                name='one_in_progress_per_counter',
+            ),
+        ]
+
     @property
     def actual_wait_minutes(self):
         if self.service_start_at:
@@ -92,6 +109,86 @@ class VisionMetric(models.Model):
 
     class Meta:
         ordering = ['-timestamp']
+
+class PatientVisit(models.Model):
+    """Groups all tokens issued during a single hospital visit under one record.
+
+    Created at first registration (single or multi). Transfer adds new tokens
+    to the same visit so the full patient journey is traceable.
+    """
+    patient = models.ForeignKey(Patient, on_delete=models.PROTECT, related_name='visits')
+    created_at = models.DateTimeField(auto_now_add=True)
+    notes = models.TextField(blank=True)
+
+    def __str__(self):
+        return f"Visit {self.pk} · {self.patient}"
+
+
+class Doctor(models.Model):
+    AVAILABLE = 'AVAILABLE'
+    DELAYED   = 'DELAYED'
+    ON_LEAVE  = 'ON_LEAVE'
+    EMERGENCY = 'EMERGENCY'
+    STATUS_CHOICES = [
+        (AVAILABLE, 'Available'),
+        (DELAYED,   'Delayed'),
+        (ON_LEAVE,  'On Leave'),
+        (EMERGENCY, 'Emergency'),
+    ]
+
+    name         = models.CharField(max_length=100)
+    service_type = models.ForeignKey(ServiceType, on_delete=models.CASCADE, related_name='doctors')
+    status       = models.CharField(max_length=20, choices=STATUS_CHOICES, default=AVAILABLE)
+    delay_minutes = models.PositiveIntegerField(default=0)
+    notes        = models.TextField(blank=True)
+    updated_at   = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Dr. {self.name} [{self.service_type}]"
+
+
+class EscalationRule(models.Model):
+    QUEUE_DEPTH = 'QUEUE_DEPTH'
+    AVG_WAIT = 'AVG_WAIT'
+    TYPE_CHOICES = [
+        (QUEUE_DEPTH, 'Queue depth exceeds'),
+        (AVG_WAIT, 'Avg wait (min) exceeds'),
+    ]
+
+    name = models.CharField(max_length=100)
+    threshold_type = models.CharField(max_length=20, choices=TYPE_CHOICES)
+    threshold_value = models.FloatField()
+    service_type = models.ForeignKey(
+        ServiceType, on_delete=models.CASCADE, null=True, blank=True,
+        related_name='escalation_rules',
+        help_text="Leave blank to apply across all service types.",
+    )
+    is_active = models.BooleanField(default=True)
+
+    def __str__(self):
+        scope = f" [{self.service_type}]" if self.service_type_id else ""
+        return f"{self.name}{scope} ({self.get_threshold_type_display()} > {self.threshold_value})"
+
+
+class EscalationAlert(models.Model):
+    rule = models.ForeignKey(EscalationRule, on_delete=models.CASCADE, related_name='alerts')
+    counter = models.ForeignKey(
+        Counter, on_delete=models.SET_NULL, null=True, blank=True, related_name='escalation_alerts'
+    )
+    service_type = models.ForeignKey(
+        ServiceType, on_delete=models.SET_NULL, null=True, blank=True, related_name='escalation_alerts'
+    )
+    triggered_value = models.FloatField()
+    message = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+    acknowledged_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Alert [{self.rule.name}] @ {self.created_at:%Y-%m-%d %H:%M}"
+
 
 class NotificationLog(models.Model):
     CHANNEL_CHOICES = [('whatsapp', 'WhatsApp'), ('sms', 'SMS')]

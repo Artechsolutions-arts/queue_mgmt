@@ -1,18 +1,24 @@
 import { motion } from "framer-motion";
 import { useMemo } from "react";
+import { useCounters } from "@/hooks/use-queue-data";
+import { counterZone } from "@/lib/counter";
 
-const ZONES = [
-  { id: "RAD", name: "Radiology", x: 8, y: 14, w: 22, h: 18, load: 0.85 },
-  { id: "ER", name: "Emergency", x: 32, y: 8, w: 28, h: 22, load: 0.62 },
-  { id: "OPD", name: "OPD Wing", x: 62, y: 12, w: 30, h: 26, load: 0.41 },
-  { id: "LAB", name: "Pathology", x: 10, y: 36, w: 18, h: 16, load: 0.72 },
-  { id: "PHA", name: "Pharmacy", x: 30, y: 36, w: 14, h: 14, load: 0.55 },
-  { id: "CAR", name: "Cardiology", x: 46, y: 34, w: 22, h: 18, load: 0.28 },
-  { id: "MAT", name: "Maternity", x: 70, y: 42, w: 22, h: 18, load: 0.31 },
-  { id: "REC", name: "Reception", x: 8, y: 56, w: 30, h: 14, load: 0.91 },
-  { id: "BIL", name: "Billing", x: 40, y: 56, w: 22, h: 14, load: 0.78 },
-  { id: "PED", name: "Pediatrics", x: 64, y: 62, w: 28, h: 16, load: 0.22 },
-];
+const ZONE_LAYOUT: Record<string, { x: number; y: number; w: number; h: number }> = {
+  Radiology:    { x: 8,  y: 14, w: 22, h: 18 },
+  Emergency:    { x: 32, y: 8,  w: 28, h: 22 },
+  OPD:          { x: 62, y: 12, w: 30, h: 26 },
+  Lab:          { x: 10, y: 36, w: 18, h: 16 },
+  Cardiology:   { x: 30, y: 36, w: 16, h: 14 },
+  Gynaecology:  { x: 48, y: 34, w: 14, h: 12 },
+  Paediatrics:  { x: 64, y: 38, w: 14, h: 12 },
+  Neurology:    { x: 8,  y: 56, w: 14, h: 13 },
+  Psychiatry:   { x: 24, y: 56, w: 14, h: 13 },
+  Dental:       { x: 40, y: 56, w: 12, h: 13 },
+  Senses:       { x: 54, y: 52, w: 14, h: 13 },
+  Dermatology:  { x: 70, y: 54, w: 12, h: 13 },
+  Surgery:      { x: 80, y: 36, w: 12, h: 16 },
+  Endoscopy:    { x: 82, y: 56, w: 12, h: 12 },
+};
 
 function loadColor(l: number) {
   if (l >= 0.8) return "oklch(0.68 0.24 20)";
@@ -22,10 +28,31 @@ function loadColor(l: number) {
 }
 
 export function FloorHeatmap() {
+  const { data: counters = [] } = useCounters();
+
+  const zones = useMemo(() => {
+    const byZone = new Map<string, { depth: number; total: number }>();
+    for (const c of counters) {
+      const z = counterZone(c);
+      const prev = byZone.get(z) ?? { depth: 0, total: 0 };
+      byZone.set(z, { depth: prev.depth + (c.queue_depth ?? 0), total: prev.total + 1 });
+    }
+    return Array.from(byZone.entries())
+      .filter(([z]) => ZONE_LAYOUT[z])
+      .map(([name, { depth, total }]) => {
+        const maxDepth = total * 10;
+        return { name, load: Math.min(depth / maxDepth, 1), ...ZONE_LAYOUT[name] };
+      });
+  }, [counters]);
+
   const flow = useMemo(() => Array.from({ length: 18 }, (_, i) => ({ id: i, delay: i * 0.18 })), []);
+
   return (
     <div className="relative h-full w-full overflow-hidden rounded-xl border border-border/50 bg-accent/40">
       <div className="absolute inset-0 grid-bg opacity-50" />
+      {zones.length === 0 && (
+        <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground">No counter data</div>
+      )}
       <svg viewBox="0 0 100 80" className="absolute inset-0 h-full w-full">
         <defs>
           <radialGradient id="zone-glow" cx="50%" cy="50%" r="50%">
@@ -33,10 +60,10 @@ export function FloorHeatmap() {
             <stop offset="100%" stopColor="currentColor" stopOpacity="0" />
           </radialGradient>
         </defs>
-        {ZONES.map((z) => {
+        {zones.map((z) => {
           const color = loadColor(z.load);
           return (
-            <g key={z.id} style={{ color }}>
+            <g key={z.name} style={{ color }}>
               <rect x={z.x} y={z.y} width={z.w} height={z.h} rx="1.2" fill="url(#zone-glow)" stroke={color} strokeOpacity={0.6} strokeWidth={0.25} />
               <rect x={z.x} y={z.y} width={z.w} height={z.h} rx="1.2" fill={color} fillOpacity={z.load * 0.35} />
               <text x={z.x + 1.2} y={z.y + 3.5} fontSize="2" fill="oklch(0.95 0.01 240)" opacity="0.85">{z.name}</text>
@@ -57,16 +84,12 @@ export function FloorHeatmap() {
             top: "60%",
             left: "10%",
           }}
-          animate={{
-            top: ["60%", "30%", "20%"],
-            left: ["10%", "55%", `${85 + (f.id % 5)}%`],
-            opacity: [0, 1, 0],
-          }}
+          animate={{ top: ["60%", "30%", "20%"], left: ["10%", "55%", `${85 + (f.id % 5)}%`], opacity: [0, 1, 0] }}
           transition={{ duration: 6 + (f.id % 4), repeat: Infinity, delay: f.delay, ease: "easeInOut" }}
         />
       ))}
       <div className="scanline pointer-events-none absolute inset-0" />
-      <div className="absolute bottom-3 right-3 flex items-center gap-3 rounded-lg border border-border/60 bg-muted/70 px-3 py-2 text-[10px] text-muted-foreground backdrop-blur">
+      <div className="absolute bottom-3 right-3 flex items-center gap-3 rounded-lg border border-border/60 bg-muted/70 px-3 py-2 text-[12px] text-muted-foreground backdrop-blur">
         {[
           { l: "Low", c: "var(--emerald-glow)" },
           { l: "Moderate", c: "var(--cyan-glow)" },

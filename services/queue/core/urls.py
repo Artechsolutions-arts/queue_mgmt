@@ -9,6 +9,8 @@ router.register(r'counters', views.CounterViewSet, basename='counter')
 router.register(r'service-types', views.ServiceTypeViewSet, basename='service-type')
 router.register(r'stats', views.StatsViewSet, basename='stats')
 router.register(r'patients', views.PatientViewSet, basename='patient')
+router.register(r'alerts', views.EscalationAlertViewSet, basename='alert')
+router.register(r'doctors', views.DoctorViewSet, basename='doctor')
 
 urlpatterns = [
     path('', include(router.urls)),

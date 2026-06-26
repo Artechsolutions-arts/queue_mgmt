@@ -1,13 +1,5 @@
 import type { Counter } from "@/lib/api";
 
-// Operational state of a counter, derived from live data:
-//   offline  — not active (staff took it offline)
-//   serving  — a token is currently IN_PROGRESS at the counter
-//   waiting  — active, nobody being served, but patients are queued
-//   idle     — active, nobody being served, queue empty
-//
-// The "waiting" state is the fix for counters reading "idle" while patients
-// wait: a queued counter is NOT idle, it's awaiting the next "Call Next".
 export type CounterState = "offline" | "serving" | "waiting" | "idle";
 
 export function counterState(c: Counter): CounterState {
@@ -24,22 +16,32 @@ export const COUNTER_STATE_LABEL: Record<CounterState, string> = {
   idle: "Idle",
 };
 
-// Derive a zone/department for a counter from its name + location. There's no
-// zone field on the model, so we classify from the text; everything else is OPD.
+// Derive a zone/department from a counter's name + location.
 export function counterZone(c: Counter): string {
   const hay = `${c.name} ${c.location_description ?? ""}`.toLowerCase();
-  // Check specific departments before the generic "lab", so a "Cardiac Cath
-  // Lab" classifies as Cardiology rather than Lab.
-  if (/cardio|ecg|echo/.test(hay)) return "Cardiology";
-  if (/endoscop/.test(hay)) return "Endoscopy";
-  if (/radiolog|x-ray|imaging|mri|\bct\b/.test(hay)) return "Radiology";
-  if (/\blab\b|patholog/.test(hay)) return "Lab";
+  if (/cardio|ecg|echo|eeg/.test(hay))           return "Cardiology";
+  if (/endoscop|biopsy/.test(hay))               return "Endoscopy";
+  if (/radiolog|x-ray|imaging|mri|\bct\b|mammog|ultrasound/.test(hay)) return "Radiology";
+  if (/\blab\b|patholog|blood|urine|pft/.test(hay)) return "Lab";
   if (/emergenc|\ber\b|trauma|casualty/.test(hay)) return "Emergency";
-  if (/pharmac/.test(hay)) return "Pharmacy";
+  if (/senses|ent|ophth|ear|nose|eye/.test(hay)) return "Senses";
+  if (/dermatol|skin/.test(hay))                 return "Dermatology";
+  if (/gynaecol|gynecol|women|maternity/.test(hay)) return "Gynaecology";
+  if (/neurol/.test(hay))                        return "Neurology";
+  if (/psychiat|mental/.test(hay))               return "Psychiatry";
+  if (/dental|dent/.test(hay))                   return "Dental";
+  if (/surg/.test(hay))                          return "Surgery";
+  if (/paediatr|pediatr/.test(hay))              return "Paediatrics";
   return "OPD";
 }
 
-// One-line operational summary for the counter cards.
+// Preferred display order for zone pills.
+export const ZONE_ORDER = [
+  "OPD", "Paediatrics", "Radiology", "Lab", "Cardiology",
+  "Endoscopy", "Neurology", "Psychiatry", "Gynaecology",
+  "Senses", "Dermatology", "Dental", "Surgery", "Emergency",
+];
+
 export function counterStatusText(c: Counter): string {
   switch (counterState(c)) {
     case "offline":

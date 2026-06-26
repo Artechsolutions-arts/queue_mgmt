@@ -6,9 +6,12 @@ import {
   useRouter,
   HeadContent,
   Scripts,
+  useRouterState,
 } from "@tanstack/react-router";
+import { useEffect } from "react";
 
 import { useQueueLiveUpdates } from "@/hooks/use-queue-data";
+import { ThemeProvider } from "@/lib/theme";
 
 import appCss from "../styles.css?url";
 
@@ -69,6 +72,8 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
   );
 }
 
+const PUBLIC_PATHS = new Set(["/login"]);
+
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
   head: () => ({
     meta: [
@@ -96,11 +101,15 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
   errorComponent: ErrorComponent,
 });
 
+const AUTH_GUARD_SCRIPT = `(function(){var p=location.pathname;if(p!=='/login'&&!localStorage.getItem('helix.auth')){location.replace('/login');}})();`;
+
 function RootShell({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
       <head>
         <HeadContent />
+        {/* Synchronous auth guard — fires before React hydrates, no flash */}
+        <script dangerouslySetInnerHTML={{ __html: AUTH_GUARD_SCRIPT }} />
       </head>
       <body>
         {children}
@@ -115,10 +124,33 @@ function RootComponent() {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <LiveUpdates />
-      <Outlet />
+      <ThemeProvider>
+        <LiveUpdates />
+        <AuthGuard />
+        <Outlet />
+      </ThemeProvider>
     </QueryClientProvider>
   );
+}
+
+function AuthGuard() {
+  const router = useRouter();
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+
+  useEffect(() => {
+    if (PUBLIC_PATHS.has(pathname)) return;
+    if (!window.localStorage.getItem("helix.auth")) {
+      router.navigate({ to: "/login", replace: true });
+    }
+  }, [pathname, router]);
+
+  useEffect(() => {
+    const handle = () => router.navigate({ to: "/login", replace: true });
+    window.addEventListener("session:expired", handle);
+    return () => window.removeEventListener("session:expired", handle);
+  }, [router]);
+
+  return null;
 }
 
 function LiveUpdates() {

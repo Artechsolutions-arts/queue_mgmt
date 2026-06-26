@@ -11,9 +11,11 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SystemRouteImport } from './routes/system'
 import { Route as StaffRouteImport } from './routes/staff'
+import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as QueuesRouteImport } from './routes/queues'
 import { Route as NotificationsRouteImport } from './routes/notifications'
-import { Route as DisplayRouteImport } from './routes/display'
+import { Route as LoginRouteImport } from './routes/login'
+import { Route as DoctorsRouteImport } from './routes/doctors'
 import { Route as CctvRouteImport } from './routes/cctv'
 import { Route as IndexRouteImport } from './routes/index'
 
@@ -27,6 +29,11 @@ const StaffRoute = StaffRouteImport.update({
   path: '/staff',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const QueuesRoute = QueuesRouteImport.update({
   id: '/queues',
   path: '/queues',
@@ -37,9 +44,14 @@ const NotificationsRoute = NotificationsRouteImport.update({
   path: '/notifications',
   getParentRoute: () => rootRouteImport,
 } as any)
-const DisplayRoute = DisplayRouteImport.update({
-  id: '/display',
-  path: '/display',
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DoctorsRoute = DoctorsRouteImport.update({
+  id: '/doctors',
+  path: '/doctors',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CctvRoute = CctvRouteImport.update({
@@ -56,18 +68,22 @@ const IndexRoute = IndexRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/cctv': typeof CctvRoute
-  '/display': typeof DisplayRoute
+  '/doctors': typeof DoctorsRoute
+  '/login': typeof LoginRoute
   '/notifications': typeof NotificationsRoute
   '/queues': typeof QueuesRoute
+  '/settings': typeof SettingsRoute
   '/staff': typeof StaffRoute
   '/system': typeof SystemRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/cctv': typeof CctvRoute
-  '/display': typeof DisplayRoute
+  '/doctors': typeof DoctorsRoute
+  '/login': typeof LoginRoute
   '/notifications': typeof NotificationsRoute
   '/queues': typeof QueuesRoute
+  '/settings': typeof SettingsRoute
   '/staff': typeof StaffRoute
   '/system': typeof SystemRoute
 }
@@ -75,9 +91,11 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/cctv': typeof CctvRoute
-  '/display': typeof DisplayRoute
+  '/doctors': typeof DoctorsRoute
+  '/login': typeof LoginRoute
   '/notifications': typeof NotificationsRoute
   '/queues': typeof QueuesRoute
+  '/settings': typeof SettingsRoute
   '/staff': typeof StaffRoute
   '/system': typeof SystemRoute
 }
@@ -86,27 +104,33 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/cctv'
-    | '/display'
+    | '/doctors'
+    | '/login'
     | '/notifications'
     | '/queues'
+    | '/settings'
     | '/staff'
     | '/system'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/cctv'
-    | '/display'
+    | '/doctors'
+    | '/login'
     | '/notifications'
     | '/queues'
+    | '/settings'
     | '/staff'
     | '/system'
   id:
     | '__root__'
     | '/'
     | '/cctv'
-    | '/display'
+    | '/doctors'
+    | '/login'
     | '/notifications'
     | '/queues'
+    | '/settings'
     | '/staff'
     | '/system'
   fileRoutesById: FileRoutesById
@@ -114,9 +138,11 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   CctvRoute: typeof CctvRoute
-  DisplayRoute: typeof DisplayRoute
+  DoctorsRoute: typeof DoctorsRoute
+  LoginRoute: typeof LoginRoute
   NotificationsRoute: typeof NotificationsRoute
   QueuesRoute: typeof QueuesRoute
+  SettingsRoute: typeof SettingsRoute
   StaffRoute: typeof StaffRoute
   SystemRoute: typeof SystemRoute
 }
@@ -137,6 +163,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof StaffRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/queues': {
       id: '/queues'
       path: '/queues'
@@ -151,11 +184,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof NotificationsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/display': {
-      id: '/display'
-      path: '/display'
-      fullPath: '/display'
-      preLoaderRoute: typeof DisplayRouteImport
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/doctors': {
+      id: '/doctors'
+      path: '/doctors'
+      fullPath: '/doctors'
+      preLoaderRoute: typeof DoctorsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/cctv': {
@@ -178,9 +218,11 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   CctvRoute: CctvRoute,
-  DisplayRoute: DisplayRoute,
+  DoctorsRoute: DoctorsRoute,
+  LoginRoute: LoginRoute,
   NotificationsRoute: NotificationsRoute,
   QueuesRoute: QueuesRoute,
+  SettingsRoute: SettingsRoute,
   StaffRoute: StaffRoute,
   SystemRoute: SystemRoute,
 }

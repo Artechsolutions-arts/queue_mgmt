@@ -1,11 +1,13 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { AppShell } from "@/components/layout/AppShell";
-import { Filter, Plus, Users, Clock, UserCheck, TrendingUp, Building2, Loader2 } from "lucide-react";
+import { Filter, Plus, Users, Clock, UserCheck, TrendingUp, Building2, Loader2, AlertTriangle } from "lucide-react";
 import { useCounters, useDashboard, useQueueMutations } from "@/hooks/use-queue-data";
 import { KpiCard, type KpiTone } from "@/components/dash/KpiCard";
 import type { Counter } from "@/lib/api";
-import { counterState, counterStatusText, counterZone } from "@/lib/counter";
+import { apiErrorMessage } from "@/lib/api";
+import { counterState, counterStatusText, counterZone, ZONE_ORDER } from "@/lib/counter";
+import { useTheme } from "@/lib/theme";
 
 export const Route = createFileRoute("/queues")({
   head: () => ({ meta: [{ title: "Smart Queues · SmartQueue" }, { name: "description", content: "Live queue lanes." }] }),
@@ -18,6 +20,7 @@ function QueuesPage() {
   const { data: counters, isError, isLoading } = useCounters();
   const { data: stats } = useDashboard();
   const { setCounterActive } = useQueueMutations();
+  const { isLight } = useTheme();
 
   const [zone, setZone] = useState("All zones");
   const [waitingOnly, setWaitingOnly] = useState(false);
@@ -28,8 +31,10 @@ function QueuesPage() {
   // current counters fall into (so no dead/irrelevant filters).
   const zones = useMemo(() => {
     const present = Array.from(new Set(all.map(counterZone)));
-    const order = ["OPD", "Radiology", "Lab", "Cardiology", "Endoscopy", "Emergency", "Pharmacy"];
-    present.sort((a, b) => order.indexOf(a) - order.indexOf(b));
+    present.sort((a, b) => {
+      const ai = ZONE_ORDER.indexOf(a), bi = ZONE_ORDER.indexOf(b);
+      return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+    });
     return ["All zones", ...present];
   }, [all]);
 
@@ -45,9 +50,9 @@ function QueuesPage() {
     .filter(hasQueue)
     .sort((a, b) => (b.queue_depth ?? 0) - (a.queue_depth ?? 0));
 
-  const offlineCounter = all.find((c) => !c.is_active);
+  const offlineCounters = all.filter((c) => !c.is_active);
   const openCounter = () => {
-    if (offlineCounter) setCounterActive.mutate({ id: offlineCounter.id, isActive: true });
+    offlineCounters.forEach((c) => setCounterActive.mutate({ id: c.id, isActive: true }));
   };
 
   return (
@@ -56,15 +61,15 @@ function QueuesPage() {
       subtitle={isError ? "Backend unreachable" : "Live counter state · token routing"}
     >
       <section className="mb-5 flex flex-wrap items-center gap-2">
-        <div className="flex items-center gap-1 rounded-xl border border-border bg-card p-1 text-xs">
+        <div className="flex items-center gap-1 rounded-xl border border-border bg-card p-1 text-base">
           {zones.map((t) => (
             <button
               key={t}
               onClick={() => setZone(t)}
-              className={`rounded-lg px-3 py-1.5 transition ${
+              className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${
                 zone === t
-                  ? "bg-[var(--cyan-glow)]/12 text-[var(--cyan-glow)]"
-                  : "text-muted-foreground hover:text-foreground"
+                  ? "bg-[var(--cyan-glow)]/15 text-[var(--cyan-glow)] ring-1 ring-[var(--cyan-glow)]/30"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted/40"
               }`}
             >
               {t}
@@ -73,7 +78,7 @@ function QueuesPage() {
         </div>
         <button
           onClick={() => setWaitingOnly((v) => !v)}
-          className={`ml-auto inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs transition ${
+          className={`ml-auto inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-base transition ${
             waitingOnly
               ? "border-[var(--warn)]/50 bg-[var(--warn)]/10 text-[var(--warn)]"
               : "border-border bg-card text-foreground hover:bg-muted/60"
@@ -83,28 +88,36 @@ function QueuesPage() {
         </button>
         <button
           onClick={openCounter}
-          disabled={!offlineCounter || setCounterActive.isPending}
-          title={offlineCounter ? `Open ${offlineCounter.name}` : "All counters are open"}
-          className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs text-foreground transition hover:bg-muted/60 disabled:opacity-40"
+          disabled={offlineCounters.length === 0 || setCounterActive.isPending}
+          title={offlineCounters.length > 0 ? `Activate ${offlineCounters.length} offline counter${offlineCounters.length > 1 ? "s" : ""}` : "All counters are open"}
+          className="inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-base !text-white transition disabled:opacity-100"
+          style={{ background: "var(--gradient-violet)" }}
         >
           {setCounterActive.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-          Open counter
+          {offlineCounters.length > 1 ? `Open all (${offlineCounters.length})` : "Open counter"}
         </button>
       </section>
+
+      {setCounterActive.error && (
+        <div className="mb-3 flex items-start gap-2 rounded-xl border border-[var(--warn)]/40 bg-[var(--warn)]/8 px-4 py-2.5 text-sm text-[var(--warn)]">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          {apiErrorMessage(setCounterActive.error, "Could not update counter status.")}
+        </div>
+      )}
 
       {/* Drill-down for "Patients Waiting": which counters have a queue right now. */}
       <section className="mb-5">
         <div className="mb-3 flex items-center justify-between">
           <div>
-            <h3 className="text-sm font-semibold text-foreground">Patients waiting</h3>
-            <p className="text-[11px] text-muted-foreground">Counters with someone in the queue right now</p>
+            <h3 className="text-lg font-semibold text-foreground">Patients waiting</h3>
+            <p className="text-[15px] text-muted-foreground">Counters with someone in the queue right now</p>
           </div>
-          <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
+          <span className="text-[14px] uppercase tracking-widest text-foreground">
             {waiting.length} {waiting.length === 1 ? "counter" : "counters"}
           </span>
         </div>
         {waiting.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-border bg-card px-5 py-8 text-center text-sm text-muted-foreground">
+          <div className="rounded-xl border border-dashed border-border bg-card px-5 py-8 text-center text-lg text-muted-foreground">
             {isLoading ? "Loading queues…" : "No patients waiting — all queues are clear."}
           </div>
         ) : (
@@ -113,30 +126,31 @@ function QueuesPage() {
               <Link
                 key={c.id}
                 to="/staff"
-                className="flex items-center justify-between rounded-xl border border-[var(--warn)]/30 bg-[var(--warn)]/5 px-4 py-3 transition hover:border-[var(--warn)]/60"
+                className="flex items-center justify-between rounded-xl border border-white/10 px-4 py-3 transition hover:opacity-90"
+                style={{ background: isLight ? "linear-gradient(135deg, oklch(0.82 0.12 290), oklch(0.88 0.10 255))" : "var(--gradient-violet)" }}
               >
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <Building2 className="h-4 w-4 shrink-0 text-[var(--warn)]" />
-                    <span className="truncate font-medium text-foreground">{c.name}</span>
+                    <Building2 className={`h-4 w-4 shrink-0 ${isLight ? "text-black" : "text-white"}`} />
+                    <span className={`truncate font-medium ${isLight ? "text-black" : "text-white"}`}>{c.name}</span>
                   </div>
                   {c.location_description && (
-                    <div className="mt-0.5 truncate text-[11px] text-muted-foreground">{c.location_description}</div>
+                    <div className={`mt-0.5 truncate text-[15px] ${isLight ? "text-black/70" : "text-white/80"}`}>{c.location_description}</div>
                   )}
                   <div className="mt-1.5 flex flex-wrap gap-1">
                     {c.next_tokens.slice(0, 4).map((t) => (
-                      <span key={t} className="rounded-md border border-border bg-card px-1.5 py-0.5 font-mono text-[10px] text-foreground">
+                      <span key={t} className={`rounded-md px-1.5 py-0.5 font-mono text-[14px] ${isLight ? "border border-black/20 bg-black/10 text-black" : "border border-white/20 bg-white/10 text-white"}`}>
                         {t}
                       </span>
                     ))}
                     {c.next_tokens.length > 4 && (
-                      <span className="self-center text-[10px] text-muted-foreground">+{c.next_tokens.length - 4} more</span>
+                      <span className={`self-center text-[14px] ${isLight ? "text-black/50" : "text-white/50"}`}>+{c.next_tokens.length - 4} more</span>
                     )}
                   </div>
                 </div>
                 <div className="ml-3 text-right">
-                  <div className="font-mono text-2xl font-semibold tabular-nums text-[var(--warn)]">{c.queue_depth}</div>
-                  <div className="text-[10px] uppercase tracking-widest text-muted-foreground">waiting</div>
+                  <div className={`font-mono text-[28px] font-semibold tabular-nums ${isLight ? "text-black" : "text-white"}`}>{c.queue_depth}</div>
+                  <div className={`text-[14px] uppercase tracking-widest ${isLight ? "text-black" : "text-white"}`}>waiting</div>
                 </div>
               </Link>
             ))}
@@ -191,22 +205,27 @@ function QueuesPage() {
       <section className="mt-5">
         <div className="mb-3 flex items-center justify-between">
           <div>
-            <h3 className="text-sm font-semibold text-foreground">Counter status</h3>
-            <p className="text-[11px] text-muted-foreground">Live per-counter occupancy from /api/counters/</p>
+            <h3 className="text-lg font-semibold text-foreground">Counter status</h3>
+            <p className="text-[15px] text-muted-foreground">Live per-counter occupancy from /api/counters/</p>
           </div>
-          <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
-            {visible.length} of {all.length} counters
+          <span className="text-[14px] uppercase tracking-widest text-muted-foreground">
+            {isError ? "— counters" : `${visible.length} of ${all.length} counters`}
           </span>
         </div>
 
-        {isLoading && <div className="rounded-xl border border-dashed border-border bg-card px-5 py-8 text-center text-sm text-muted-foreground">Loading counters…</div>}
-        {!isLoading && all.length === 0 && (
-          <div className="rounded-xl border border-dashed border-border bg-card px-5 py-8 text-center text-sm text-muted-foreground">
-            No counters configured. Start the backend and seed counters to populate this view.
+        {isLoading && <div className="rounded-xl border border-dashed border-border bg-card px-5 py-8 text-center text-lg text-muted-foreground">Loading counters…</div>}
+        {!isLoading && isError && (
+          <div className="rounded-xl border border-dashed border-[var(--danger)]/40 bg-[var(--danger)]/5 px-5 py-8 text-center text-lg text-[var(--danger)]">
+            Backend unreachable — start the queue service and refresh.
           </div>
         )}
-        {!isLoading && all.length > 0 && visible.length === 0 && (
-          <div className="rounded-xl border border-dashed border-border bg-card px-5 py-8 text-center text-sm text-muted-foreground">
+        {!isLoading && !isError && all.length === 0 && (
+          <div className="rounded-xl border border-dashed border-border bg-card px-5 py-8 text-center text-lg text-muted-foreground">
+            No counters seeded — run <code className="font-mono text-base">make seed</code> to populate counters.
+          </div>
+        )}
+        {!isLoading && !isError && all.length > 0 && visible.length === 0 && (
+          <div className="rounded-xl border border-dashed border-border bg-card px-5 py-8 text-center text-lg text-muted-foreground">
             No counters match this filter.
           </div>
         )}
@@ -224,9 +243,12 @@ function QueuesPage() {
 
 function CounterTile({ counter, tone }: { counter: Counter; tone: KpiTone }) {
   const state = counterState(counter);
-  // Surface a queued-but-not-serving counter as "warn" so it stands out.
+  // offline → violet (counter is down — informational, not as urgent as a backed-up queue)
+  // waiting → warn  (patients in queue but nobody calling — needs attention)
   const displayTone: KpiTone =
-    state === "offline" ? "warn" : state === "waiting" ? "warn" : tone;
+    state === "offline" ? "violet" : state === "waiting" ? "warn" : tone;
+  const depth = counter.queue_depth ?? 0;
+  const deltaText = depth > 0 ? `${depth} waiting` : "Queue clear";
   return (
     <KpiCard
       to="/staff"
@@ -234,8 +256,8 @@ function CounterTile({ counter, tone }: { counter: Counter; tone: KpiTone }) {
       icon={Building2}
       label={counter.name}
       value={counter.current_token ?? "—"}
-      delta={`${counter.queue_depth} waiting · ${counter.next_tokens.length} ready`}
-      deltaTone="muted"
+      delta={deltaText}
+      deltaTone={depth > 0 ? "warn" : "good"}
       status={counterStatusText(counter)}
     />
   );

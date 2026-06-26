@@ -23,6 +23,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useRegisterMulti, useServiceTypes } from "@/hooks/use-queue-data";
 import { ApiError, type RegisterMultiResult, type ServiceType } from "@/lib/api";
+import { useTheme } from "@/lib/theme";
 
 // Header CTA + dialog that registers a patient against POST /api/queue/register-multi/.
 // Services are split into two checkbox groups by ServiceType.kind:
@@ -31,6 +32,7 @@ import { ApiError, type RegisterMultiResult, type ServiceType } from "@/lib/api"
 // One token is issued per selection; on success the issued tokens are listed,
 // shortest-wait first, and the live queue views refresh via the mutation hook.
 export function RegisterPatientDialog() {
+  const { isLight } = useTheme();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -111,7 +113,7 @@ export function RegisterPatientDialog() {
       <DialogTrigger asChild>
         <button
           type="button"
-          className="flex h-10 items-center gap-2 rounded-xl px-3 text-sm font-medium text-white shadow-sm transition hover:opacity-90"
+          className="flex h-10 items-center gap-2 rounded-xl px-3 text-base font-medium !text-white shadow-sm transition hover:opacity-90"
           style={{ background: "var(--gradient-violet)" }}
           aria-label="Register patient"
         >
@@ -137,17 +139,21 @@ export function RegisterPatientDialog() {
                 {orderedTokens.length === 1 ? "token" : "tokens"} issued
               </span>
             </div>
+            <div className="flex items-center justify-between rounded-xl border border-border bg-muted/40 px-4 py-3">
+              <span className="text-sm text-muted-foreground">Patient ID</span>
+              <span className="font-mono text-lg font-bold tracking-wide text-foreground">{result.patient_id}</span>
+            </div>
             <ul className="space-y-2">
               {orderedTokens.map((t) => (
                 <li
                   key={t.token_number}
-                  className="rounded-xl border border-border bg-muted/40 p-3 text-sm"
+                  className="rounded-xl border border-border bg-muted/40 p-3 text-base"
                 >
                   <div className="flex items-center justify-between">
                     <span className="font-medium">{t.service_type_name}</span>
                     <span className="font-mono font-semibold">{t.token_number}</span>
                   </div>
-                  <div className="mt-1 flex items-center justify-between text-xs text-muted-foreground">
+                  <div className="mt-1 flex items-center justify-between text-sm text-muted-foreground">
                     <span>{t.counter}</span>
                     <span>{waitLabel(t.queue_depth)}</span>
                   </div>
@@ -218,7 +224,7 @@ export function RegisterPatientDialog() {
             {/* WhatsApp/SMS opt-in — required before we message the patient. */}
             <label
               htmlFor="rp-consent"
-              className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-border bg-muted/30 p-3 text-xs text-muted-foreground"
+              className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-border bg-muted/30 p-3 text-sm text-muted-foreground"
             >
               <Checkbox
                 id="rp-consent"
@@ -234,14 +240,14 @@ export function RegisterPatientDialog() {
             </label>
 
             {errorMsg && (
-              <div className="flex items-start gap-2 rounded-lg border border-[var(--danger)]/30 bg-[var(--danger)]/10 p-2.5 text-xs text-[var(--danger)]">
+              <div className="flex items-start gap-2 rounded-lg border border-[var(--danger)]/30 bg-[var(--danger)]/10 p-2.5 text-sm text-[var(--danger)]">
                 <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                 <span>{errorMsg}</span>
               </div>
             )}
 
             <DialogFooter className="items-center gap-2 sm:gap-2">
-              <span className="mr-auto text-xs text-muted-foreground">
+              <span className="mr-auto text-sm text-muted-foreground">
                 {selected.size} selected
               </span>
               <Button type="submit" disabled={!canSubmit}>
@@ -271,13 +277,13 @@ function CheckboxGroup({
 }) {
   return (
     <div>
-      <div className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
+      <div className="mb-2 flex items-center gap-1.5 text-[13px] font-semibold uppercase tracking-widest text-muted-foreground">
         {icon}
         {title}
         <span className="font-normal normal-case tracking-normal">({items.length})</span>
       </div>
       {items.length === 0 ? (
-        <p className="text-xs text-muted-foreground">None available.</p>
+        <p className="text-sm text-muted-foreground">None available.</p>
       ) : (
         <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
           {items.map((s) => {
@@ -287,7 +293,7 @@ function CheckboxGroup({
               <label
                 key={s.id}
                 htmlFor={id}
-                className={`flex cursor-pointer items-center gap-2 rounded-lg border px-2.5 py-2 text-sm hover:bg-muted/50 ${
+                className={`flex cursor-pointer items-center gap-2 rounded-lg border px-2.5 py-2 text-base hover:bg-muted/50 ${
                   isChecked
                     ? "border-primary/50 bg-primary/5"
                     : "border-border bg-card"

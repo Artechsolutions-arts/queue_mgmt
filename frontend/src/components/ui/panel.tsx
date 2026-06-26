@@ -55,8 +55,8 @@ export function PanelHeader({
           />
         )}
         <div>
-          <h3 className="text-sm font-semibold tracking-tight text-foreground">{title}</h3>
-          {subtitle && <p className="text-[11px] text-muted-foreground">{subtitle}</p>}
+          <h3 className="text-[17px] font-semibold tracking-tight text-white">{title}</h3>
+          {subtitle && <p className="text-[11px] text-white/60">{subtitle}</p>}
         </div>
       </div>
       {action}

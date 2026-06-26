@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import {
   api,
-  WS_URL,
+  wsUrlWithToken,
   type RegisterPayload,
   type RegisterMultiPayload,
   type Token,
@@ -110,7 +110,7 @@ export function useQueueLiveUpdates() {
       if (cancelled) return;
       let ws: WebSocket;
       try {
-        ws = new WebSocket(WS_URL);
+        ws = new WebSocket(wsUrlWithToken());
       } catch {
         scheduleReconnect();
         return;

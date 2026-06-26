@@ -1,6 +1,7 @@
 import { motion } from "framer-motion";
-import { Check, ArrowDownRight, ArrowUpRight } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight } from "lucide-react";
 import { Link } from "@tanstack/react-router";
+import { useTheme } from "@/lib/theme";
 
 export type KpiTone = "cyan" | "violet" | "emerald" | "warn" | "danger";
 export type DeltaTone = "good" | "bad" | "warn" | "violet" | "muted";
@@ -38,7 +39,7 @@ const DELTA_COLOR: Record<DeltaTone, string> = {
   bad: "oklch(0.6 0.22 25)",
   warn: "oklch(0.62 0.16 55)",
   violet: "oklch(0.55 0.2 290)",
-  muted: "oklch(0.48 0.02 250)",
+  muted: "currentColor",
 };
 
 export function KpiCard({
@@ -63,6 +64,7 @@ export function KpiCard({
   to?: string;
 }) {
   const t = TONE[tone];
+  const { isLight } = useTheme();
 
   // Auto-pick delta tone + arrow when delta is a numeric percentage
   const numericDelta = typeof delta === "number" ? delta : null;
@@ -86,37 +88,29 @@ export function KpiCard({
         ? delta
         : null;
 
+  const textColor = isLight ? "#000000" : "#ffffff";
+
   const body = (
     <>
       <div className="flex items-start justify-between">
+        <div className="text-[16.5px] font-semibold uppercase" style={{ color: textColor }}>{label}</div>
         <span
           className="grid h-11 w-11 place-items-center rounded-xl text-white shadow-md"
           style={{ background: t.gradient, boxShadow: `0 8px 18px -8px ${t.solid}` }}
         >
           <Icon className="h-[18px] w-[18px]" />
         </span>
-        <span
-          className="grid h-7 w-7 place-items-center rounded-full"
-          style={{ background: t.tint, color: t.solid }}
-        >
-          <Check className="h-3.5 w-3.5" strokeWidth={2.5} />
-        </span>
       </div>
 
-      <div className="mt-4 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">{label}</div>
-
       <div className="mt-1.5 flex items-baseline gap-1.5">
-        <span
-          className="text-[32px] font-bold leading-none tracking-tight tabular-nums"
-          style={{ color: t.solid }}
-        >
+        <span className="text-[30px] font-bold leading-none tracking-tight tabular-nums" style={{ color: textColor }}>
           {value}
         </span>
-        {unit && <span className="text-sm font-medium text-muted-foreground">{unit}</span>}
+        {unit && <span className="text-base font-medium" style={{ color: textColor }}>{unit}</span>}
       </div>
 
       {deltaLabel && (
-        <div className="mt-2 flex items-center gap-1 text-xs font-medium" style={{ color: deltaColor }}>
+        <div className="mt-2 flex items-center gap-1 text-sm font-medium" style={{ color: resolvedDeltaTone === "muted" ? textColor : deltaColor }}>
           {Arrow && <Arrow className="h-3.5 w-3.5" />}
           {deltaLabel}
         </div>
@@ -124,8 +118,8 @@ export function KpiCard({
 
       {status && (
         <div
-          className="mt-4 flex items-center gap-2 rounded-lg px-3 py-2 text-[11px] font-medium"
-          style={{ background: t.tint, color: t.solid }}
+          className="mt-4 flex items-center gap-2 rounded-lg px-3 py-2 text-[13px] font-medium"
+          style={{ background: t.tint, color: isLight ? "#000000" : "#ffffff" }}
         >
           <span className="h-1.5 w-1.5 rounded-full" style={{ background: t.solid }} />
           {status}
@@ -135,7 +129,7 @@ export function KpiCard({
   );
 
   const sharedClass =
-    "group relative flex flex-col rounded-2xl border border-border bg-card p-5 transition-shadow hover:shadow-[0_2px_6px_0_oklch(0.2_0.02_250/0.06),0_18px_36px_-18px_oklch(0.2_0.02_250/0.16)]";
+    "group relative flex flex-col rounded-2xl glass p-5 transition-all hover:-translate-y-1 hover:shadow-[0_8px_32px_oklch(0.7_0.15_230/0.15)]";
   const motionProps = {
     initial: { opacity: 0, y: 12 },
     animate: { opacity: 1, y: 0 },

@@ -1,6 +1,6 @@
 from django.core.management.base import BaseCommand
 
-from core.models import Counter, ServiceType
+from core.models import Counter, ServiceType, EscalationRule, Doctor
 
 CONSULTATION = "CONSULTATION"
 DIAGNOSTIC = "DIAGNOSTIC"
@@ -37,20 +37,21 @@ DEFAULT_SERVICES = [
 ]
 
 DEFAULT_COUNTERS = [
-    # Original counters (kept for backwards compat with existing tokens)
-    ("Counter 1", "Main Hall, next to the pharmacy", ["GEN"]),
-    ("Counter 2", "East Wing, behind the elevator", ["PED"]),
-    ("Counter 3", "West Wing, near the cafeteria", ["CARD"]),
-    ("Counter 4", "Main Hall, opposite the reception", ["GEN", "ORTHO"]),
-    ("Lab Counter 5", "Pathology Lab, 1st floor", ["BLD", "URN", "PFT"]),
-    ("Radiology Counter 6", "Radiology Dept, ground floor", ["XRY", "MRI", "ULT", "CT", "MAM"]),
-    # New counters covering the added departments + tests
-    ("Counter 7", "East Wing, 2nd floor — Skin & Senses", ["DERM", "ENT", "OPHT"]),
-    ("Counter 8", "West Wing, 2nd floor — Women & Brain", ["GYN", "NEUR"]),
-    ("Counter 9", "South Wing, ground floor — Dental & Mental Health", ["DENT", "PSY"]),
-    ("Counter 10", "South Wing, 1st floor — Surgery Consult", ["SURG"]),
-    ("Cardio Counter 11", "Cardiology Lab, 2nd floor", ["ECG", "ECHO", "EEG"]),
-    ("Endoscopy Suite 12", "Endoscopy Suite, 3rd floor", ["ENDO", "BIO"]),
+    ("OPD Desk A",          "Main Hall, ground floor",                      ["GEN"]),
+    ("Paediatrics Desk",    "East Wing, ground floor",                      ["PED"]),
+    ("Cardiology Desk",     "West Wing, ground floor",                      ["CARD"]),
+    ("OPD Desk B",          "Main Hall, opposite the reception",            ["GEN", "ORTHO"]),
+    ("Pathology Lab",       "Pathology Lab, 1st floor",                     ["BLD", "URN", "PFT"]),
+    ("Radiology Suite",     "Radiology Dept, ground floor",                 ["XRY", "MRI", "ULT", "CT", "MAM"]),
+    ("Dermatology Desk",    "East Wing, 2nd floor",                         ["DERM"]),
+    ("Senses Desk",         "East Wing, 2nd floor — ENT & Ophthalmology",   ["ENT", "OPHT"]),
+    ("Gynecology Desk",    "West Wing, 2nd floor",                         ["GYN"]),
+    ("Neurology Desk",      "West Wing, 2nd floor — Neurology",             ["NEUR"]),
+    ("Dental Desk",         "South Wing, ground floor",                     ["DENT"]),
+    ("Psychiatry Desk",     "South Wing, ground floor — Mental Health",     ["PSY"]),
+    ("Surgical Desk",       "South Wing, 1st floor",                        ["SURG"]),
+    ("Cardiology Lab",      "Cardiology Lab, 2nd floor",                    ["ECG", "ECHO", "EEG"]),
+    ("Endoscopy Suite",     "Endoscopy Suite, 3rd floor",                   ["ENDO", "BIO"]),
 ]
 
 
@@ -79,13 +80,48 @@ class Command(BaseCommand):
             self.stdout.write(self.style.SUCCESS(f"{tag}: service {obj} [{kind}]"))
 
         for name, location, prefixes in DEFAULT_COUNTERS:
-            counter, created = Counter.objects.get_or_create(
+            counter, created = Counter.objects.update_or_create(
                 name=name,
                 defaults={"location_description": location, "is_active": True},
             )
             counter.service_types.set([services[p] for p in prefixes])
             self.stdout.write(
-                self.style.SUCCESS(f"{'created' if created else 'exists'}: {counter.name}")
+                self.style.SUCCESS(f"{'created' if created else 'activated'}: {counter.name}")
             )
+
+        for name, threshold_type, threshold_value in [
+            ("High queue depth", EscalationRule.QUEUE_DEPTH, 5),
+            ("Long avg wait",    EscalationRule.AVG_WAIT,    20),
+        ]:
+            _, created = EscalationRule.objects.get_or_create(
+                name=name,
+                defaults={"threshold_type": threshold_type, "threshold_value": threshold_value, "is_active": True},
+            )
+            self.stdout.write(self.style.SUCCESS(f"{'created' if created else 'exists'}: escalation rule '{name}'"))
+
+        DEFAULT_DOCTORS = [
+            ("Ananya Sharma",    "GEN"),
+            ("Rajesh Kumar",     "GEN"),
+            ("Priya Nair",       "CARD"),
+            ("Suresh Menon",     "NEUR"),
+            ("Deepa Iyer",       "GYN"),
+            ("Arjun Patel",      "ORTHO"),
+            ("Kavita Reddy",     "PED"),
+            ("Mohammed Farooq",  "DERM"),
+            ("Sunita Joshi",     "PSY"),
+            ("Vikram Singh",     "SURG"),
+            ("Lakshmi Venkat",   "ENT"),
+            ("Arun Krishnan",    "OPHT"),
+            ("Meera Pillai",     "DENT"),
+        ]
+        for name, prefix in DEFAULT_DOCTORS:
+            st = services.get(prefix)
+            if not st:
+                continue
+            _, created = Doctor.objects.get_or_create(
+                name=name, service_type=st,
+                defaults={"status": Doctor.AVAILABLE},
+            )
+            self.stdout.write(self.style.SUCCESS(f"{'created' if created else 'exists'}: Dr. {name} [{st.name}]"))
 
         self.stdout.write(self.style.SUCCESS("Seed complete."))

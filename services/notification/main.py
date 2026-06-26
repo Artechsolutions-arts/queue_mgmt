@@ -91,11 +91,10 @@ class NotificationWorker:
     # ----- shared sender ----------------------------------------------------
 
     async def _send(self, phone: str, masked: str, body: str, label: str) -> None:
-        """Deliver one patient notification. WhatsApp is the primary channel and
-        keeps the *bold* markup. SMS is sent per NOTIFICATION_SMS_MODE — by
-        default only as a fallback when WhatsApp can't be accepted, so patients
-        aren't double-notified. 'ok' means Twilio accepted (queued) the message;
-        final delivery arrives via the status callback."""
+        """Deliver one patient notification. Raises RuntimeError for retriable
+        failures so the run loop leaves the Redis message un-acked for retry.
+        Permanent failures (invalid number, STOP opt-out) are logged and acked —
+        retrying them wastes API calls and will always fail."""
         loop = asyncio.get_running_loop()
 
         wa = await loop.run_in_executor(
@@ -103,8 +102,13 @@ class NotificationWorker:
         )
         if wa.ok:
             logger.info("%s WhatsApp accepted (queued) to=%s sid=%s", label, masked, wa.sid)
+        elif wa.retriable:
+            logger.warning("%s WhatsApp retriable failure to=%s err=%s — leaving in PEL",
+                           label, masked, wa.error)
+            raise RuntimeError(f"WhatsApp retriable failure: {wa.error}")
         else:
-            logger.error("%s WhatsApp failed to=%s err=%s", label, masked, wa.error)
+            logger.error("%s WhatsApp permanent failure to=%s err=%s", label, masked, wa.error)
+            # Permanent (invalid number, STOP, bad auth) — no retry value; fall through to ack.
 
         if SMS_MODE == "off":
             return
@@ -129,7 +133,9 @@ class NotificationWorker:
                 return
             if attempt < MAX_RETRIES:
                 await asyncio.sleep(2 ** attempt)
-        logger.error("%s SMS exhausted to=%s err=%s", label, masked, result.error if result else "?")
+        # SMS exhausted retries — raise so the message stays in PEL for manual replay.
+        logger.error("%s SMS exhausted retries to=%s err=%s", label, masked, result.error if result else "?")
+        raise RuntimeError(f"SMS exhausted retries: {result.error if result else 'unknown'}")
 
     @staticmethod
     def _skip(data: dict, what: str) -> bool:
@@ -150,12 +156,32 @@ class NotificationWorker:
         phone = data['phone_number']
         token = data.get('token_number', 'your number')
         name = data.get('patient_name', 'there')
+        counter_name = data.get('counter_name', '')
+        counter_location = data.get('counter_location', '')
+        try:
+            queue_depth = int(data.get('counter_queue_depth', 0))
+        except (ValueError, TypeError):
+            queue_depth = 0
+
         body = (
             f"✅ You're checked in, {name}\n\n"
-            f"Your number is *{token}*\n\n"
-            "No need to queue — just take a seat.\n"
-            "I'll message you the moment it's your turn."
+            f"Your token number is *{token}*\n\n"
         )
+
+        if counter_name:
+            body += f"📍 The queue is shorter at *{counter_name}* — please proceed there first."
+            if counter_location:
+                body += f"\n{counter_location}"
+            if queue_depth == 0:
+                body += "\n_(No one ahead of you right now!)_"
+            elif queue_depth == 1:
+                body += "\n_(Only 1 person ahead of you)_"
+            else:
+                body += f"\n_({queue_depth} people ahead of you)_"
+            body += "\n\n"
+
+        body += "No need to stand in line — take a seat.\nI'll message you the moment it's your turn."
+
         await self._send(phone, mask_phone(phone), body, f"Registration token={token}")
 
     # ----- check-in confirmation (multi-service) ----------------------------
@@ -178,24 +204,44 @@ class NotificationWorker:
             return
 
         masked = mask_phone(phone)
+        # tokens are already sorted by queue_depth ASC from views.py — first = shortest queue
+        first = tokens[0]
+        counter = first.get('counter_name', '')
+        location = first.get('counter_location', '')
+        try:
+            depth = int(first.get('queue_depth', 0))
+        except (ValueError, TypeError):
+            depth = 0
+
         if len(tokens) == 1:
-            t = tokens[0]
             body = (
                 f"✅ You're checked in, {name}\n\n"
-                f"Your number is *{t['number']}*\n\n"
-                "No need to queue — just take a seat.\n"
-                "I'll message you the moment it's your turn."
+                f"Your token number is *{first['number']}*\n\n"
             )
         else:
-            # Mention the quickest first stop, but never the full list.
-            first = min(tokens, key=lambda x: int(x.get('queue_depth', 0)))
             body = (
                 f"✅ You're checked in, {name}\n\n"
-                f"You have *{len(tokens)} steps* today.\n"
-                f"First up: {first.get('service_name', 'your first visit')}.\n\n"
-                "No need to queue — I'll guide you to each one,\n"
-                "one step at a time."
+                f"You have *{len(tokens)} steps* today.\n\n"
             )
+
+        # Always tell the patient which counter to head to first and how busy it is
+        if counter:
+            body += f"📍 Head to *{counter}* first — it has the shortest queue right now."
+            if location:
+                body += f"\n{location}"
+            if depth == 0:
+                body += "\n_(No one ahead of you — go now!)_"
+            elif depth == 1:
+                body += "\n_(Only 1 person ahead of you)_"
+            else:
+                body += f"\n_({depth} people ahead of you)_"
+            body += "\n\n"
+
+        if len(tokens) == 1:
+            body += "I'll message you the moment it's your turn."
+        else:
+            body += "I'll guide you to each stop one at a time.\nJust take a seat and wait for my message."
+
         await self._send(phone, masked, body, f"Registration tokens={len(tokens)}")
 
     # ----- counter ready (it's your turn) -----------------------------------

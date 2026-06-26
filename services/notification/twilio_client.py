@@ -17,6 +17,18 @@ def _bool(name: str, default: bool = False) -> bool:
     return os.getenv(name, str(default)).lower() in ('1', 'true', 'yes', 'on')
 
 
+def normalize_number(number: str) -> str:
+    """Collapse a number to E.164 (single leading + then digits). Twilio's
+    WhatsApp channel rejects an address containing spaces with error 21211,
+    whereas SMS tolerates it — so an un-normalized number silently degrades
+    to SMS-only. Strip here as a safety net for records stored before input
+    normalization existed."""
+    if not number:
+        return number
+    digits = "".join(c for c in number if c.isdigit())
+    return f"+{digits}" if digits else number
+
+
 def mask_phone(number: str) -> str:
     """Mask middle digits — log-safe but still resolvable on audit replay."""
     if not number:
@@ -101,6 +113,8 @@ class NotificationClient:
     # ----------------------------------------------------------------- WhatsApp
 
     def send_whatsapp(self, to_number: str, message: Optional[str] = None, content_sid: Optional[str] = None, content_variables: Optional[str] = None) -> SendResult:
+        if not to_number.startswith("whatsapp:"):
+            to_number = normalize_number(to_number)
         # 1. Primary Option: Send via Twilio WhatsApp
         twilio_res = self._send(
             channel="whatsapp",
@@ -162,7 +176,7 @@ class NotificationClient:
         }
         
         try:
-            res = requests.post(url, headers=headers, json=payload)
+            res = requests.post(url, headers=headers, json=payload, timeout=(5, 30))
             data = res.json()
             if res.ok and "messages" in data:
                 wa_id = data["messages"][0]["id"]
@@ -182,7 +196,7 @@ class NotificationClient:
         return self._send(
             channel="sms",
             from_=self.sms_number,
-            to=to_number,
+            to=normalize_number(to_number),
             body=message,
         )
 

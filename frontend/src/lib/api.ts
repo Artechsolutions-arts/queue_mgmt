@@ -8,6 +8,11 @@ export const WS_URL =
   (import.meta.env.VITE_WS_URL as string | undefined) ??
   "ws://localhost:8000/ws/queue/";
 
+export function wsUrlWithToken(): string {
+  const token = authToken ?? window.localStorage.getItem("helix.auth") ?? window.sessionStorage.getItem("helix.auth") ?? "";
+  return token ? `${WS_URL}?token=${encodeURIComponent(token)}` : WS_URL;
+}
+
 export class ApiError extends Error {
   status: number;
   body: unknown;
@@ -36,14 +41,29 @@ export function apiErrorMessage(error: unknown, fallback = "Something went wrong
 
 let authToken: string | null = null;
 if (typeof window !== "undefined") {
-  authToken = window.localStorage.getItem("helix.auth") || null;
+  authToken =
+    window.localStorage.getItem("helix.auth") ||
+    window.sessionStorage.getItem("helix.auth") ||
+    null;
 }
 
-export function setAuthToken(token: string | null) {
+// persist=true  → localStorage (survives tab close — "remember me" behaviour)
+// persist=false → sessionStorage (cleared when the tab closes)
+export function setAuthToken(token: string | null, persist = true) {
   authToken = token;
   if (typeof window !== "undefined") {
-    if (token) window.localStorage.setItem("helix.auth", token);
-    else window.localStorage.removeItem("helix.auth");
+    if (token) {
+      if (persist) {
+        window.localStorage.setItem("helix.auth", token);
+        window.sessionStorage.removeItem("helix.auth");
+      } else {
+        window.sessionStorage.setItem("helix.auth", token);
+        window.localStorage.removeItem("helix.auth");
+      }
+    } else {
+      window.localStorage.removeItem("helix.auth");
+      window.sessionStorage.removeItem("helix.auth");
+    }
   }
 }
 
@@ -58,6 +78,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const text = await res.text();
   const body = text ? safeJson(text) : null;
 
+  if (res.status === 401) {
+    setAuthToken(null);
+    if (typeof window !== "undefined") {
+      // Dispatch a custom event so the AuthGuard in __root__.tsx can handle the
+      // redirect via client-side navigation rather than a full page reload.
+      window.dispatchEvent(new CustomEvent("session:expired"));
+    }
+    throw new ApiError(401, body, "Session expired");
+  }
   if (!res.ok) {
     throw new ApiError(res.status, body, `${res.status} ${res.statusText}`);
   }
@@ -123,6 +152,34 @@ export interface Token {
   service_start_at: string | null;
   completed_at: string | null;
   actual_wait_minutes: number | null;
+  visit_id: number | null;
+}
+
+export type DoctorStatus = "AVAILABLE" | "DELAYED" | "ON_LEAVE" | "EMERGENCY";
+
+export interface Doctor {
+  id: number;
+  name: string;
+  service_type: number;
+  service_type_name: string;
+  status: DoctorStatus;
+  delay_minutes: number;
+  notes: string;
+  updated_at: string;
+  is_available: boolean;
+}
+
+export interface EscalationAlert {
+  id: number;
+  rule_name: string;
+  threshold_type: "QUEUE_DEPTH" | "AVG_WAIT";
+  counter_name: string | null;
+  service_type_name: string | null;
+  triggered_value: number;
+  message: string;
+  created_at: string;
+  acknowledged_at: string | null;
+  is_acknowledged: boolean;
 }
 
 export interface RegisterPayload {
@@ -134,10 +191,41 @@ export interface RegisterPayload {
 }
 
 // Mirrors the 201 body of POST /api/queue/register/ (services/queue/core/views.py).
+export interface VisitToken {
+  id: number;
+  number: string;
+  service_type_name: string;
+  counter_name: string | null;
+  status: Token["status"];
+  created_at: string;
+  service_start_at: string | null;
+  completed_at: string | null;
+  actual_wait_minutes: number | null;
+}
+
+export interface PatientVisit {
+  id: number;
+  patient_id: string;
+  patient_name: string;
+  created_at: string;
+  notes: string;
+  tokens: VisitToken[];
+}
+
+export interface TransferResult {
+  visit_id: number;
+  new_token_number: string;
+  service_type: string;
+  counter: string;
+  directions: string;
+}
+
 export interface RegisterResult {
+  patient_id: string;
+  visit_id: number;
   token_number: string;
   counter: string;
-  predicted_wait_minutes: number;
+  estimated_wait_minutes: number;
   directions: string;
   medical_notes: string;
 }
@@ -166,6 +254,8 @@ export interface MultiToken {
 }
 
 export interface RegisterMultiResult {
+  patient_id: string;
+  visit_id: number;
   tokens: MultiToken[];
 }
 
@@ -207,4 +297,19 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ username, password }),
     }),
+  alerts: () => request<EscalationAlert[]>("/alerts/"),
+  acknowledgeAlert: (id: number) =>
+    request<EscalationAlert>(`/alerts/${id}/acknowledge/`, { method: "POST" }),
+  transfer: (tokenNumber: string, targetServiceTypeId: number) =>
+    request<TransferResult>("/queue/transfer/", {
+      method: "POST",
+      body: JSON.stringify({ token_number: tokenNumber, target_service_type_id: targetServiceTypeId }),
+    }),
+  journey: (visitId: number) =>
+    request<PatientVisit>(`/queue/journey/?visit_id=${visitId}`),
+  journeyByToken: (tokenNumber: string) =>
+    request<PatientVisit>(`/queue/journey/?token_number=${encodeURIComponent(tokenNumber)}`),
+  doctors: () => request<Doctor[]>("/doctors/"),
+  setDoctorStatus: (id: number, payload: { status: DoctorStatus; delay_minutes?: number; notes?: string }) =>
+    request<Doctor>(`/doctors/${id}/set_status/`, { method: "POST", body: JSON.stringify(payload) }),
 };

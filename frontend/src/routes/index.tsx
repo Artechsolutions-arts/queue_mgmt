@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useTheme } from "@/lib/theme";
 import { Users, Clock, UserCheck, TrendingUp, Play, CheckCircle2, UserX, Power, AlertTriangle } from "lucide-react";
 import { motion } from "framer-motion";
 import { useMemo } from "react";
@@ -11,6 +12,8 @@ import {
   useQueueMutations,
   useTokens,
 } from "@/hooks/use-queue-data";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { api } from "@/lib/api";
 import type { Counter, Token } from "@/lib/api";
 import { apiErrorMessage } from "@/lib/api";
 import { counterState, COUNTER_STATE_LABEL, type CounterState } from "@/lib/counter";
@@ -29,6 +32,12 @@ function Index() {
   const { data: stats, isError } = useDashboard();
   const { data: counters } = useCounters();
   const { data: inProgress } = useTokens("IN_PROGRESS");
+  const queryClient = useQueryClient();
+  const { data: alerts = [] } = useQuery({ queryKey: ["alerts"], queryFn: api.alerts, refetchInterval: 30_000 });
+  const acknowledge = useMutation({
+    mutationFn: api.acknowledgeAlert,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["alerts"] }),
+  });
 
   const inProgressByCounter = useMemo(() => {
     const m = new Map<number, Token>();
@@ -46,6 +55,30 @@ function Index() {
 
   return (
     <AppShell title="Command Center" subtitle={subtitle}>
+      {alerts.length > 0 && (
+        <section className="mb-5 flex flex-col gap-2">
+          {alerts.map((alert) => (
+            <motion.div
+              key={alert.id}
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="flex items-start gap-3 rounded-xl border border-orange-500/30 bg-orange-500/10 px-4 py-3"
+            >
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-orange-500" />
+              <div className="min-w-0 flex-1">
+                <span className="text-sm font-semibold text-orange-600">{alert.rule_name}</span>
+                <span className="ml-2 text-sm text-orange-500/80">{alert.message}</span>
+              </div>
+              <button
+                onClick={() => acknowledge.mutate(alert.id)}
+                className="shrink-0 rounded-lg border border-orange-500/30 px-2.5 py-1 text-[12px] font-medium text-orange-600 transition hover:bg-orange-500/10"
+              >
+                Dismiss
+              </button>
+            </motion.div>
+          ))}
+        </section>
+      )}
       <section className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4">
         <KpiCard
           to="/queues"
@@ -115,7 +148,7 @@ function CounterMatrix({
 
   if (counters.length === 0) {
     return (
-      <div className="px-6 py-12 text-center text-sm text-muted-foreground">
+      <div className="px-6 py-12 text-center text-base text-white">
         No counters configured. Start the backend and seed counters to populate this matrix.
       </div>
     );
@@ -123,9 +156,9 @@ function CounterMatrix({
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-left text-sm">
+      <table className="w-full text-left text-base">
         <thead>
-          <tr className="text-[10px] uppercase tracking-widest text-muted-foreground">
+          <tr className="text-[15px] uppercase tracking-widest text-white">
             <th className="px-5 py-3 font-medium">Station</th>
             <th className="px-5 py-3 font-medium">Current Category</th>
             <th className="px-5 py-3 font-medium">Token in Service</th>
@@ -146,21 +179,21 @@ function CounterMatrix({
 
             return (
               <tr key={c.id} className="border-t border-border/40 transition-colors hover:bg-[var(--cyan-glow)]/5">
-                <td className="px-5 py-3 font-semibold text-foreground">
+                <td className="px-5 py-3 font-semibold text-white">
                   <Link to="/staff" className="hover:text-[var(--cyan-glow)] hover:underline underline-offset-4">
                     {c.name}
                   </Link>
                 </td>
-                <td className="px-5 py-3 text-muted-foreground">{category}</td>
+                <td className="px-5 py-3 text-white">{category}</td>
                 <td className="px-5 py-3">
                   {tokenLabel ? (
-                    <span className="font-mono text-foreground">{tokenLabel}</span>
+                    <span className="font-mono text-white">{tokenLabel}</span>
                   ) : (
-                    <span className="font-mono text-muted-foreground">—</span>
+                    <span className="font-mono text-white">—</span>
                   )}
                 </td>
-                <td className="px-5 py-3 font-mono tabular-nums text-foreground/90">
-                  {c.queue_depth} <span className="text-muted-foreground">waiting</span>
+                <td className="px-5 py-3 font-mono tabular-nums text-white">
+                  {c.queue_depth} <span className="text-white">waiting</span>
                 </td>
                 <td className="px-5 py-3">
                   <StatusBadge state={counterState(c)} />
@@ -208,7 +241,7 @@ function CounterMatrix({
       </table>
 
       {(callNext.error || complete.error || noShow.error || setCounterActive.error) && (
-        <div className="flex items-start gap-2 border-t border-[var(--warn)]/40 bg-[var(--warn)]/10 px-5 py-2.5 text-xs text-[var(--warn)]">
+        <div className="flex items-start gap-2 border-t border-[var(--warn)]/40 bg-[var(--warn)]/10 px-5 py-2.5 text-sm text-[var(--warn)]">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           <span>
             {apiErrorMessage(
@@ -232,7 +265,7 @@ function StatusBadge({ state }: { state: CounterState }) {
   const glow = state === "serving" || state === "waiting";
   return (
     <span
-      className="inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest"
+      className="inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[12px] font-semibold uppercase tracking-widest"
       style={{
         borderColor: `color-mix(in oklab, ${color} 35%, transparent)`,
         background: `color-mix(in oklab, ${color} 12%, transparent)`,
@@ -263,22 +296,25 @@ function ActionBtn({
   disabled?: boolean;
   pending?: boolean;
 }) {
+  const { isLight } = useTheme();
   const color =
     tone === "cyan" ? "var(--cyan-glow)" :
     tone === "emerald" ? "var(--emerald-glow)" :
     tone === "warn" ? "var(--warn)" :
-    "var(--muted-foreground)";
+    "rgba(255, 255, 255, 0.6)";
+  const bgOpacity = isLight ? 28 : 12;
+  const borderOpacity = isLight ? 55 : 35;
   return (
     <motion.button
       whileHover={disabled ? undefined : { y: -1 }}
       whileTap={disabled ? undefined : { scale: 0.97 }}
       onClick={onClick}
       disabled={disabled}
-      className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-35"
+      className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-35"
       style={{
-        borderColor: `color-mix(in oklab, ${color} 35%, transparent)`,
-        background: `color-mix(in oklab, ${color} 12%, transparent)`,
-        color,
+        borderColor: `color-mix(in oklab, ${color} ${borderOpacity}%, transparent)`,
+        background: `color-mix(in oklab, ${color} ${bgOpacity}%, transparent)`,
+        color: isLight ? "#000000" : color,
       }}
     >
       <Icon className="h-3.5 w-3.5" />

@@ -10,9 +10,11 @@ from core.models import Counter, ServiceType, Token
 
 @pytest.fixture
 def setup_counters(db):
-    svc = ServiceType.objects.create(name="General", prefix="GEN", avg_service_time=10)
-    c1 = Counter.objects.create(number=1, current_service_type=svc)
-    c2 = Counter.objects.create(number=2, current_service_type=svc)
+    svc = ServiceType.objects.create(name="General", prefix="GEN", kind="CONSULTATION")
+    c1 = Counter.objects.create(name="Counter 1", is_active=True)
+    c2 = Counter.objects.create(name="Counter 2", is_active=True)
+    c1.service_types.set([svc])
+    c2.service_types.set([svc])
     return svc, c1, c2
 
 
@@ -117,7 +119,7 @@ class TestComplete:
 
 @pytest.mark.django_db
 class TestNoShow:
-    def test_cancels_waiting_token(self, client, setup_counters):
+    def test_marks_waiting_token_no_show(self, client, setup_counters):
         svc, c1, _ = setup_counters
         Token.objects.create(
             number='GEN-001', patient_name='A', phone_number='1',
@@ -125,7 +127,7 @@ class TestNoShow:
         )
         resp = client.post('/api/queue/GEN-001/no_show/')
         assert resp.status_code == 200
-        assert resp.data['status'] == 'CANCELLED'
+        assert resp.data['status'] == 'NO_SHOW'
 
     def test_rejects_completed_token(self, client, setup_counters):
         svc, c1, _ = setup_counters
@@ -148,12 +150,13 @@ class TestReassign:
         )
         resp = client.post('/api/queue/GEN-001/reassign/', {'counter_id': c2.id})
         assert resp.status_code == 200
-        assert resp.data['counter_number'] == 2
+        assert resp.data['counter'] == c2.id
 
     def test_rejects_when_target_serves_different_service(self, client, setup_counters):
         svc, c1, _ = setup_counters
-        other_svc = ServiceType.objects.create(name='Lab', prefix='LAB', avg_service_time=5)
-        c3 = Counter.objects.create(number=3, current_service_type=other_svc)
+        other_svc = ServiceType.objects.create(name='Lab', prefix='LAB', kind='DIAGNOSTIC')
+        c3 = Counter.objects.create(name="Counter 3", is_active=True)
+        c3.service_types.set([other_svc])
         Token.objects.create(
             number='GEN-001', patient_name='A', phone_number='1',
             service_type=svc, counter=c1, status='WAITING',
@@ -223,7 +226,7 @@ class TestDashboardStats:
 
     def test_flags_bottleneck_counter(self, client, setup_counters):
         svc, c1, _ = setup_counters
-        # avg_service_time=10, threshold default 20 → 3 waiting × 10 = 30 ≥ 20.
+        # Default BOTTLENECK_DEPTH_THRESHOLD=3 → 3 waiting tokens triggers it.
         for i in range(3):
             Token.objects.create(
                 number=f'GEN-{i:03d}', patient_name='X', phone_number='1',
@@ -233,7 +236,7 @@ class TestDashboardStats:
         assert resp.status_code == 200
         bottlenecks = resp.data['bottlenecks']
         assert len(bottlenecks) == 1
-        assert bottlenecks[0]['counter_number'] == 1
+        assert bottlenecks[0]['id'] == c1.id
         assert bottlenecks[0]['queue_depth'] == 3
 
 
@@ -252,11 +255,11 @@ class TestCounterListAnnotations:
         )
         resp = client.get('/api/counters/')
         assert resp.status_code == 200
-        by_number = {c['number']: c for c in resp.data}
-        assert by_number[1]['queue_depth'] == 1
-        assert by_number[1]['current_token']['number'] == 'GEN-002'
-        assert by_number[2]['queue_depth'] == 0
-        assert by_number[2]['current_token'] is None
+        by_id = {c['id']: c for c in resp.data}
+        assert by_id[c1.id]['queue_depth'] == 1
+        assert by_id[c1.id]['current_token'] == 'GEN-002'
+        assert by_id[c2.id]['queue_depth'] == 0
+        assert by_id[c2.id]['current_token'] is None
 
     def test_counter_response_includes_next_tokens(self, client, setup_counters):
         svc, c1, _ = setup_counters
@@ -271,9 +274,9 @@ class TestCounterListAnnotations:
 
         resp = client.get('/api/counters/')
         assert resp.status_code == 200
-        by_number = {c['number']: c for c in resp.data}
-        next_tokens = by_number[1]['next_tokens']
-        assert [t['number'] for t in next_tokens] == ['GEN-001', 'GEN-002', 'GEN-003']
+        by_id = {c['id']: c for c in resp.data}
+        next_tokens = by_id[c1.id]['next_tokens']
+        assert next_tokens == ['GEN-001', 'GEN-002', 'GEN-003']
 
 
 @pytest.mark.django_db
@@ -284,10 +287,10 @@ class TestFullLifecycleIntegration:
         svc, c1, _ = setup_counters
 
         reg = client.post('/api/queue/register/', {
-            'name': 'Patient', 'phone': '+12025550199', 'service_type': svc.id,
+            'patient_name': 'Patient', 'phone_number': '+12025550199', 'service_type_id': svc.id,
         })
         assert reg.status_code == 201
-        token_number = reg.data['number']
+        token_number = reg.data['token_number']
 
         called = client.post('/api/queue/call_next/', {'counter_id': c1.id})
         assert called.status_code == 200
